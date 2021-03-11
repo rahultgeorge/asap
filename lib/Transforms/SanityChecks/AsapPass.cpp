@@ -62,6 +62,8 @@ bool AsapPass::runOnModule(Module &M) {
         TotalCost += I.second;
     }
 
+    //Rahul: Add function to remove checks for safe objects
+
     // Start removing checks. They are given in order of decreasing cost, so we
     // simply remove the first few.
     uint64_t RemovedCost = 0;
@@ -72,14 +74,18 @@ bool AsapPass::runOnModule(Module &M) {
             if ((NChecksRemoved + 1) > TotalChecks * (1.0 - SanityLevel)) {
                 break;
             }
-        } else if (CostLevel >= 0.0) {
+        }
+
+        else if (CostLevel >= 0.0) {
             // Make sure we get the boundary conditions right... it's important
             // that at cost level 0.0, we don't remove checks that cost zero.
             if (RemovedCost >= TotalCost * (1.0 - CostLevel) ||
                     (RemovedCost + I.second) > TotalCost * (1.0 - CostLevel)) {
                 break;
             }
-        } else if (CostThreshold != (unsigned long long)(-1)) {
+        }
+
+        else if (CostThreshold != (unsigned long long)(-1)) {
             if (I.second < CostThreshold) {
                 break;
             }
@@ -88,6 +94,8 @@ bool AsapPass::runOnModule(Module &M) {
         if (optimizeCheckAway(I.first)) {
             RemovedCost += I.second;
             NChecksRemoved += 1;
+            // TODO - New method to add new checks
+          handleHotCheckRemoved(I.first);
         }
     }
     
@@ -153,6 +161,10 @@ bool AsapPass::optimizeCheckAway(llvm::Instruction *Inst) {
     }
 
     return Changed;
+}
+
+bool AsapPass::handleHotCheckRemoved(llvm::Instruction *Inst){
+  return false;
 }
 
 char AsapPass::ID = 0;

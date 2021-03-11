@@ -30,4 +30,7 @@ private:
     
     // Tries to remove a sanity check; returns true if it worked.
     bool optimizeCheckAway(llvm::Instruction *Inst);
+
+    //Method to add other checks to handle hot check removed
+    bool handleHotCheckRemoved(llvm::Instruction *Inst);
 };

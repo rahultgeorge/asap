@@ -1,0 +1,49 @@
+ENV that need to be set
+
+ASAP_PATH
+
+ASAP_STATE_PATH
+
+    export PATH=$ASAP_DIR/build/bin:$PATH
+    cd $ASAP_DIR/asap/lib/Transforms/SanityChecks/doc/sum
+    make
+
+
+Phases
+# - First step: -asap-init
+#   Creates the ASAP state directory, which contains all the additional files
+#   that ASAP manages throughout a compilation.
+#   After asap-init, the software is ready to be compiled.
+# - Second step: -asap-coverage
+#   Prepares the compilation with coverage instrumentation. After this step,
+#   the software should be compiled again, and the resulting binary will be
+#   instrumented for coverage.
+# - Third step: -asap-compute-costs
+#   Collects sanity checks and computes their costs
+# - Fourth step: -asap-optimize
+#   Prepares for optimized compilation. Running make/ninja again after this
+#   should result in an optimized binary.
+
+
+Based on sum
+-fsanitize- flag is set for all stages
+For step 1 asap-clang  -asap-init
+For step 2 asap-clang -asap-coverage
+For step 3 & 4 asap-clang -asap-optimize
+
+Sanity level
+-> Removes hot checks till sanity level but counts frequency as well?
+
+Cost threshold
+-> No check greater than the threshold (maximum cost we can tolerate)
+
+Cost Level
+-> Based on cost threshold (budget) (here frequency is accounted for)
+
+
+SanityCheckCostPass - Finds costs of sanity checks
+SanityCheckInstructionsPass - Finds instructions belonging to sanity checks
+AsapPass - removes checks (Optimizes)
+
+
+Cost is Cost model cost * gcov freq

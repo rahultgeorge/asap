@@ -45,6 +45,7 @@ void SanityCheckInstructionsPass::findInstructions(Function *F) {
     SmallPtrSet<BasicBlock*, 64>   BlockWorklist;
     
     // A map from instructions to the checks that use them.
+    // RAHUL : Is this correct - why only 4?
     std::map<Instruction*, SmallPtrSet<Instruction*, 4> > ChecksByInstruction;
 
     for (BasicBlock &BB: *F) {
@@ -82,6 +83,7 @@ void SanityCheckInstructionsPass::findInstructions(Function *F) {
                             Worklist.insert(Op);
                             
                             // Copy ChecksByInstruction from Inst to Op
+                            // Rahul - Here they are copying the checks that use the parent instruction (user) into the map for this instruction
                             auto CBI = ChecksByInstruction.find(Inst);
                             if (CBI != ChecksByInstruction.end()) {
                                 ChecksByInstruction[Op].insert(CBI->second.begin(), CBI->second.end());
@@ -105,6 +107,8 @@ void SanityCheckInstructionsPass::findInstructions(Function *F) {
         // ... and checking whether this causes basic blocks to contain only
         // sanity checks. This would in turn cause terminators to be added to
         // the worklist.
+        // Rahul - To deal with the basic block that contains the branch instruction
+        // Rahul - It was never added so if it isn't a sanity check basic block we can just skip it
         while (!BlockWorklist.empty()) {
             BasicBlock *BB = *BlockWorklist.begin();
             BlockWorklist.erase(BB);

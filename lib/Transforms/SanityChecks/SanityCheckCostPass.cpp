@@ -1,5 +1,13 @@
 // This file is part of ASAP.
 // Please see LICENSE.txt for copyright and licensing information.
+// Rahul - This pass must be changed.
+
+/*  In this pass we use the SanityCheckInstructionPass to identify the checks
+ *  They use the cost model for the cost
+ *  TODO - Read attack graph and then elide checks based on cost and traces
+ *  TODO - Will probably need to do something about hot checks for which there are attack traces using the attack graph.
+ *  Probably need to move ASAN checks from that point to some other point
+ */
 
 #include "SanityCheckCostPass.h"
 #include "SanityCheckInstructionsPass.h"
@@ -61,7 +69,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
             // The cost of a check is the sum of the cost of all instructions
             // that this check uses.
             // TODO: If an instruction is used by multiple checks, we need an
-            // intelligent way to handle the nonlinearity.
+            // intelligent way to handle the non linearity.
             uint64_t Cost = 0;
             for (Instruction *CI: SCI.getInstructionsBySanityCheck(BI)) {
                 unsigned CurrentCost = sanitychecks::getInstructionCost(CI, &TTI);
