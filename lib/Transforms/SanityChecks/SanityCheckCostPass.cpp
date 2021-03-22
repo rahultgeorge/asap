@@ -88,7 +88,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
                 assert(CurrentCost <= 100 && "Outlier cost value?");
 
                 Cost += CurrentCost * GF->getCount(CI);
-                DEBUG(nInstructions += 1);
+                DEBUG(nInstructions += 1) ;
             }
 
             APInt CountInt = APInt(64, Cost);

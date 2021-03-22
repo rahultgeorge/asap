@@ -40,6 +40,10 @@ bool AsapPass::runOnModule(Module &M) {
   SCC = &getAnalysis<SanityCheckCostPass>();
   SCI = &getAnalysis<SanityCheckInstructionsPass>();
 
+  // Fetch program name
+  programName = M.getModuleIdentifier();
+  programName = programName.substr(0, programName.length() - 3);
+
   // Check whether we got the right amount of parameters
   int nParams = 0;
   if (SanityLevel >= 0.0)
@@ -66,7 +70,7 @@ bool AsapPass::runOnModule(Module &M) {
   }
 
   // Rahul: Add function to remove checks for safe objects
-  removeSafeStackObjectChecks();
+  //  removeSafeStackObjectChecks();
 
   // Start removing checks. They are given in order of decreasing cost, so we
   // simply remove the first few.
@@ -74,16 +78,14 @@ bool AsapPass::runOnModule(Module &M) {
   size_t NChecksRemoved = 0;
   for (const SanityCheckCostPass::CheckCost &I : SCC->getCheckCosts()) {
 
-    if(isSafeStackObject(I.first))
-    {
+    if (isSafeStackObject(I.first)) {
       if (optimizeCheckAway(I.first)) {
         RemovedCost += I.second;
         NChecksRemoved += 1;
         // TODO - New method to add new checks
         handleHotCheckRemoved(I.first);
       }
-    }
-    else {
+    } else {
       // Elision based on sanity level and
       if (SanityLevel >= 0.0) {
         if ((NChecksRemoved + 1) > TotalChecks * (1.0 - SanityLevel)) {
@@ -186,24 +188,89 @@ bool AsapPass::handleHotCheckRemoved(llvm::Instruction *Inst) {
   return false;
 }
 
-bool AsapPass::isSafeStackObject(BranchInst* branchInst) {
+// Explicit only for now
+bool AsapPass::isSafeStackObject(BranchInst *branchInst) {
   unsigned int RegularBranch;
-  BasicBlock* memoryAccessBasicBlock;
+  BasicBlock *memoryAccessBasicBlock;
+  Instruction *memoryAccessInstruction;
 
-    // Step 1: Find the regular branch
-    RegularBranch = getRegularBranch(branchInst, SCI);
+  // Step 1: Find the regular branch
+  RegularBranch = getRegularBranch(branchInst, SCI);
 
-    // Step 2
-    if(RegularBranch!=-1) {
-      memoryAccessBasicBlock=branchInst->getSuccessor(RegularBranch);
-      for(auto it=memoryAccessBasicBlock->begin();it!=memoryAccessBasicBlock->end();it++)
-      {
-        errs()<<"Instruction:"<<*it<<"\n";
+  // Step 2 - Find the actual memory access operation
+  if (RegularBranch != (unsigned)(-1)) {
+    memoryAccessBasicBlock = branchInst->getSuccessor(RegularBranch);
+    for (auto it = memoryAccessBasicBlock->begin();
+         it != memoryAccessBasicBlock->end(); it++) {
+      // TODO Should this be more robust
+      if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
+        memoryAccessInstruction = loadInst;
+      } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
+        memoryAccessInstruction = storeInst;
       }
     }
+    errs() << "Instruction:" << *memoryAccessInstruction << "\n";
+    return !checkIfUnsafePointerAction(memoryAccessInstruction);
+  }
+  // Conservative - if we can't figure out the memory access operation let's
+  // classify it as unsafe
+  return false;
+}
 
+bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
+  std::string statement;
+  std::string programNodeLabel = "";
+  std::string instructionString = "";
+  std::string functionName;
+  // Set a hard character limit on any field returned from the query
+  char *field = (char *)malloc(sizeof(char) * 500);
+  raw_string_ostream rso(instructionString);
+  neo4j_connection_t *connection;
+  neo4j_value_t functionNameValue;
+  neo4j_value_t actionTypeValue;
+  neo4j_value_t instructionValue;
+  neo4j_value_t programNameValue;
+  neo4j_map_entry_t mapEntries[4];
+  neo4j_value_t params;
+  neo4j_result_t *record;
+  neo4j_result_stream_t *results;
+
+  rso << *instruction;
+  if (instruction->getParent()->getParent())
+    functionName = instruction->getParent()->getParent()->getName();
+  else
+    functionName = std::string("NULL");
+
+  programNameValue = neo4j_string(programName.c_str());
+  actionTypeValue = neo4j_string("AttackAction");
+  instructionValue = neo4j_string(instructionString.c_str());
+  functionNameValue = neo4j_string(functionName.c_str());
+
+  mapEntries[0] = neo4j_map_entry("program_name", programNameValue);
+  mapEntries[1] = neo4j_map_entry("action_type", actionTypeValue);
+  mapEntries[2] = neo4j_map_entry("instruction", instructionValue);
+  mapEntries[3] = neo4j_map_entry("function_name", functionNameValue);
+
+  statement = " MATCH (a:AttackGraphNode)-[:EDGE]->(p:ProgramInstruction) "
+              "WHERE a.program_name=p.program_name=$program_name AND "
+              "a.type=$action_type AND p.instruction CONTAINS $instruction AND "
+              "p.function_name=$function_name RETURN p.label";
+  params = neo4j_map(mapEntries, 4);
+  connection = neo4j_connect("neo4j://neo4j:secret@localhost:7687", NULL,
+                             NEO4J_INSECURE);
+  results = neo4j_run(connection, statement.c_str(), params);
+  // There should only be one record
+  if ((record = neo4j_fetch_next(results)) != NULL) {
+    neo4j_ntostring(neo4j_result_field(record, 0), field, 500);
+    programNodeLabel = std::string(field);
+    programNodeLabel =
+        programNodeLabel.substr(1, programNodeLabel.length() - 2);
+  }
+  neo4j_close_results(results);
+  neo4j_close(connection);
+  if (programNodeLabel.empty())
     return false;
-
+  return true;
 }
 
 char AsapPass::ID = 0;

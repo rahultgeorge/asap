@@ -1,5 +1,7 @@
 # This file is part of ASAP.
 # Please see LICENSE.txt for copyright and licensing information.
+include(GNUInstallDirs)
+include_directories("/usr/local/include")
 
 add_llvm_loadable_module(SanityChecks
   AsapPass.cpp
@@ -12,6 +14,8 @@ add_llvm_loadable_module(SanityChecks
 )
 
 add_dependencies(SanityChecks LLVMInstrumentation)
+find_library(NEO4J_CLIENT neo4j-client)
+target_link_libraries(SanityChecks PUBLIC "${NEO4J_CLIENT}")
 
 # Create symlinks for asap-clang.rb
 add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/bin/asap-clang

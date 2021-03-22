@@ -52,6 +52,10 @@ Obtaining and Compiling ASAP
         #   file to be generated. This file is useful if you're editing the ASAP
         #   source code or running code analysis tools.
         cmake -G Ninja -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ../asap
+        
+        /usr/local/bin/cmake -G Ninja -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON  -DLLVM_BINUTILS_INCDIR=/usr/include ..
+
+        /usr/local/bin/cmake --build .
 
         # Launch the compilation
         cmake --build .
@@ -59,7 +63,7 @@ Obtaining and Compiling ASAP
    On Linux, add `-DLLVM_BINUTILS_INCDIR=/usr/include` to the cmake command
    line.
 
-
+l
 Trying ASAP on a small example
 ------------------------------
 

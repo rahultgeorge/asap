@@ -4,6 +4,9 @@ ASAP_PATH
 
 ASAP_STATE_PATH
 
+export ASAP_DIR=/home/rahultgeorge/Desktop/asap
+export ASAP_STATE_PATH=/home/rahultgeorge/Desktop/asap/asap/doc/sum/asap_state
+
     export PATH=$ASAP_DIR/build/bin:$PATH
     cd $ASAP_DIR/asap/lib/Transforms/SanityChecks/doc/sum
     make
