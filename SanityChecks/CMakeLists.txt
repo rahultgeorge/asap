@@ -2,8 +2,18 @@
 # Please see LICENSE.txt for copyright and licensing information.
 include(GNUInstallDirs)
 include_directories("/usr/local/include")
+cmake_minimum_required(VERSION 3.16)
+project(SanityChecks)
 
-add_llvm_loadable_module(SanityChecks
+set(CMAKE_CXX_STANDARD 11)
+
+
+find_package(LLVM REQUIRED CONFIG)
+add_definitions(${LLVM_DEFINITIONS})
+include_directories(${LLVM_INCLUDE_DIRS})
+link_directories(${LLVM_LIBRARY_DIRS})
+
+add_library(SanityChecks MODULE
   AsapPass.cpp
   CostModel.cpp
   ExitInsteadOfAbortPass.cpp
