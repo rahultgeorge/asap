@@ -52,7 +52,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
     std::unique_ptr<sanitychecks::GCOVFile> GF(createGCOVFile());
 
     for (Function &F: M) {
-        DEBUG(dbgs() << "SanityCheckCostPass on " << F.getName() << "\n");
+        dbgs() << "SanityCheckCostPass on " << F.getName() << "\n";
         const TargetTransformInfo &TTI = TTIWP.getTTI(F);
 
         for (Instruction *Inst: SCI.getSanityCheckBranches(&F)) {

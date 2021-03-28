@@ -19,165 +19,151 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/Demangle/Demangle.h"
+//#include "llvm/ProfileData/GCOV.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/MemoryObject.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <system_error>
+#include <unordered_map>
 using namespace llvm;
 using namespace sanitychecks;
 
 #define DEBUG_TYPE "sanitychecks-gcov"
 
+
+
+using namespace llvm;
+
+enum : uint32_t {
+  GCOV_ARC_ON_TREE = 1 << 0,
+  GCOV_ARC_FALLTHROUGH = 1 << 2,
+
+  GCOV_TAG_FUNCTION = 0x01000000,
+  GCOV_TAG_BLOCKS = 0x01410000,
+  GCOV_TAG_ARCS = 0x01430000,
+  GCOV_TAG_LINES = 0x01450000,
+  GCOV_TAG_COUNTER_ARCS = 0x01a10000,
+  // GCOV_TAG_OBJECT_SUMMARY superseded GCOV_TAG_PROGRAM_SUMMARY in GCC 9.
+  GCOV_TAG_OBJECT_SUMMARY = 0xa1000000,
+  GCOV_TAG_PROGRAM_SUMMARY = 0xa3000000,
+};
+
+namespace {
+struct Summary {
+  Summary(StringRef Name) : Name(Name) {}
+
+  StringRef Name;
+  uint64_t lines = 0;
+  uint64_t linesExec = 0;
+  uint64_t branches = 0;
+  uint64_t branchesExec = 0;
+  uint64_t branchesTaken = 0;
+};
+
+struct LineInfo {
+  SmallVector<const GCOVBlock *, 1> blocks;
+  uint64_t count = 0;
+  bool exists = false;
+};
+
+struct SourceInfo {
+  StringRef filename;
+  SmallString<0> displayName;
+  std::vector<std::vector<const GCOVFunction *>> startLineToFunctions;
+  std::vector<LineInfo> lines;
+  bool ignored = false;
+  SourceInfo(StringRef filename) : filename(filename) {}
+};
+
+class Context {
+public:
+  Context(const GCOV::Options &Options) : options(Options) {}
+  void print(StringRef filename, StringRef gcno, StringRef gcda,
+             GCOVFile &file);
+
+private:
+  std::string getCoveragePath(StringRef filename, StringRef mainFilename) const;
+  void printFunctionDetails(const GCOVFunction &f, raw_ostream &os) const;
+  void printBranchInfo(const GCOVBlock &Block, uint32_t &edgeIdx,
+                       raw_ostream &OS) const;
+  void printSummary(const Summary &summary, raw_ostream &os) const;
+
+  void collectFunction(GCOVFunction &f, Summary &summary);
+  void collectSourceLine(SourceInfo &si, Summary *summary, LineInfo &line,
+                         size_t lineNum) const;
+  void collectSource(SourceInfo &si, Summary &summary) const;
+  void annotateSource(SourceInfo &si, const GCOVFile &file, StringRef gcno,
+                      StringRef gcda, raw_ostream &os) const;
+  void printSourceToIntermediate(const SourceInfo &si, raw_ostream &os) const;
+
+  const GCOV::Options &options;
+  std::vector<SourceInfo> sources;
+};
+} // namespace
+
 //===----------------------------------------------------------------------===//
 // GCOVFile implementation.
 
-/// readGCNO - Read GCNO buffer.
-bool GCOVFile::readGCNO(GCOVBuffer &Buffer) {
-  if (!Buffer.readGCNOFormat())
-    return false;
-  if (!Buffer.readGCOVVersion(Version))
-    return false;
-
-  if (!Buffer.readInt(Checksum))
-    return false;
-  while (true) {
-    if (!Buffer.readFunctionTag())
-      break;
-    auto GFun = make_unique<GCOVFunction>(*this);
-    if (!GFun->readGCNO(Buffer, Version))
-      return false;
-    Functions.push_back(std::move(GFun));
-  }
-
-  GCNOInitialized = true;
-  return true;
-}
-
-/// readGCDA - Read GCDA buffer. It is required that readGCDA() can only be
-/// called after readGCNO().
-bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
-  assert(GCNOInitialized && "readGCDA() can only be called after readGCNO()");
-  if (!Buffer.readGCDAFormat())
-    return false;
-  GCOV::GCOVVersion GCDAVersion;
-  if (!Buffer.readGCOVVersion(GCDAVersion))
-    return false;
-  if (Version != GCDAVersion) {
-    errs() << "GCOV versions do not match.\n";
-    return false;
-  }
-
-  uint32_t GCDAChecksum;
-  if (!Buffer.readInt(GCDAChecksum))
-    return false;
-  if (Checksum != GCDAChecksum) {
-    errs() << "File checksums do not match: " << Checksum
-           << " != " << GCDAChecksum << ".\n";
-    return false;
-  }
-  for (size_t i = 0, e = Functions.size(); i < e; ++i) {
-    if (!Buffer.readFunctionTag()) {
-      errs() << "Unexpected number of functions.\n";
-      return false;
-    }
-    if (!Functions[i]->readGCDA(Buffer, Version))
-      return false;
-  }
-  if (Buffer.readObjectTag()) {
-    uint32_t Length;
-    uint32_t Dummy;
-    if (!Buffer.readInt(Length))
-      return false;
-    if (!Buffer.readInt(Dummy))
-      return false; // checksum
-    if (!Buffer.readInt(Dummy))
-      return false; // num
-    if (!Buffer.readInt(RunCount))
-      return false;
-    Buffer.advanceCursor(Length - 3);
-  }
-  while (Buffer.readProgramTag()) {
-    uint32_t Length;
-    if (!Buffer.readInt(Length))
-      return false;
-    Buffer.advanceCursor(Length);
-    ++ProgramCount;
-  }
-
-  return true;
-}
-
-/// dump - Dump GCOVFile content to dbgs() for debugging purposes.
-void GCOVFile::dump() const {
-  for (const auto &FPtr : Functions)
-    FPtr->dump();
-}
-
-/// collectLineCounts - Collect line counts. This must be used after
-/// reading .gcno and .gcda files.
-void GCOVFile::collectLineCounts(FileInfo &FI) {
-  for (const auto &FPtr : Functions)
-    FPtr->collectLineCounts(FI);
-  FI.setRunCount(RunCount);
-  FI.setProgramCount(ProgramCount);
-}
 
 uint64_t GCOVFile::getCount(Instruction *Inst) const {
-    BasicBlock *ParentB = Inst->getParent();
-    Function   *ParentF = Inst->getParent()->getParent();
-    const GCOVFunction *F = getFunction(ParentF);
-    if (!F) {
-        // FIXME: Sometimes GCOV data seems to be missing some functions.
-        // I haven't yet found out why this is so. I currently silently ignore
-        // the issue, but this might cause problems.
-        DEBUG(dbgs() << "Warning: could not find function "
-                     << ParentF->getName()
-                     << " in GCOV data\n");
-        return 0;
-    }
-    
-    // Find the offset of the block inside its function, and take the GCOV block
-    // at the same offset.
-    // FIXME: This could break very easily, if the order in which GCOV handles
-    //        blocks changes... we try to assert on the shape of the CFG, but
-    //        there is no real guarantee.
-    
-    // GCOVProfiler::emitProfileNotes() splits the entry block of the function.
-    // It also adds a "return block", which is always the last block.
-    // Hence the first and last block of the GCOVFunction are unused, and hence
-    // the +2.
-    assert(ParentF->size() + 2 == F->getNumBlocks()
-            && "Function size does not match GCOV data?");
-    Function::iterator ParentBI = ParentF->begin();
-    GCOVFunction::BlockIterator BI = F->block_begin();
-    ++BI;  // Skip split entry block
-    while (ParentBI != ParentF->end() && &(*ParentBI) != ParentB) {
-        assert(((isa<ReturnInst>(ParentBI->getTerminator()) && BI->getNumDstEdges() == 1) ||
-                (ParentBI->getTerminator()->getNumSuccessors() == BI->getNumDstEdges()))
-                && "CFG mismatch: dst edges");
-        ++ParentBI;
-        ++BI;
-    }
-    assert(ParentBI != ParentF->end()
-            && "Basic block not a member of its parent function?.");
-    assert(ParentBI->getTerminator()->getNumSuccessors() == BI->getNumDstEdges()
-            && "CFG mismatch: dst edges");
-    
-    return BI->getCount();
+  BasicBlock *ParentB = Inst->getParent();
+  Function   *ParentF = Inst->getParent()->getParent();
+  const GCOVFunction *F = getFunction(ParentF);
+  if (!F) {
+    // FIXME: Sometimes GCOV data seems to be missing some functions.
+    // I haven't yet found out why this is so. I currently silently ignore
+    // the issue, but this might cause problems.
+    dbgs() << "Warning: could not find function "
+                 << ParentF->getName()
+                 << " in GCOV data\n";
+    return 0;
+  }
+
+  // Find the offset of the block inside its function, and take the GCOV block
+  // at the same offset.
+  // FIXME: This could break very easily, if the order in which GCOV handles
+  //        blocks changes... we try to assert on the shape of the CFG, but
+  //        there is no real guarantee.
+
+  // GCOVProfiler::emitProfileNotes() splits the entry block of the function.
+  // It also adds a "return block", which is always the last block.
+  // Hence the first and last block of the GCOVFunction are unused, and hence
+  // the +2.
+  assert(ParentF->size() + 2 == F->getNumBlocks()
+         && "Function size does not match GCOV data?");
+  Function::iterator ParentBI = ParentF->begin();
+  GCOVFunction::BlockIterator BI = F->block_begin();
+  ++BI;  // Skip split entry block
+  while (ParentBI != ParentF->end() && &(*ParentBI) != ParentB) {
+    assert(((isa<ReturnInst>(ParentBI->getTerminator()) && BI->getNumDstEdges() == 1) ||
+            (ParentBI->getTerminator()->getNumSuccessors() == BI->getNumDstEdges()))
+           && "CFG mismatch: dst edges");
+    ++ParentBI;
+    ++BI;
+  }
+  assert(ParentBI != ParentF->end()
+         && "Basic block not a member of its parent function?.");
+  assert(ParentBI->getTerminator()->getNumSuccessors() == BI->getNumDstEdges()
+         && "CFG mismatch: dst edges");
+
+  return BI->getCount();
 }
 
 const GCOVFunction *GCOVFile::getFunction(const Function* F) const {
-    for (const auto &Fptr : Functions) {
-        // FIXME: somehow returning a pointer defeats the use of std::unique_ptr
-        // here. Is there a way to do this properly?
-        if (Fptr->getName() == F->getName()) return Fptr.get();
-    }
-    
-    return nullptr;
+  for (const auto &Fptr : Functions) {
+    // FIXME: somehow returning a pointer defeats the use of std::unique_ptr
+    // here. Is there a way to do this properly?
+    if (Fptr->getName() == F->getName()) return Fptr.get();
+  }
+
+  return nullptr;
 }
 
 //===----------------------------------------------------------------------===//
@@ -309,9 +295,11 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
 /// readGCDA - Read a function from the GCDA buffer. Return false if an error
 /// occurs.
 bool GCOVFunction::readGCDA(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
-  uint32_t Dummy;
-  if (!Buff.readInt(Dummy))
+  uint32_t HeaderLength;
+  if (!Buff.readInt(HeaderLength))
     return false; // Function header length
+
+  uint64_t EndPos = Buff.getCursor() + HeaderLength * sizeof(uint32_t);
 
   uint32_t GCDAIdent;
   if (!Buff.readInt(GCDAIdent))
@@ -342,13 +330,15 @@ bool GCOVFunction::readGCDA(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
     }
   }
 
-  StringRef GCDAName;
-  if (!Buff.readString(GCDAName))
-    return false;
-  if (Name != GCDAName) {
-    errs() << "Function names do not match: " << Name << " != " << GCDAName
-           << ".\n";
-    return false;
+  if (Buff.getCursor() < EndPos) {
+    StringRef GCDAName;
+    if (!Buff.readString(GCDAName))
+      return false;
+    if (Name != GCDAName) {
+      errs() << "Function names do not match: " << Name << " != " << GCDAName
+             << ".\n";
+      return false;
+    }
   }
 
   if (!Buff.readArcTag()) {
@@ -401,13 +391,17 @@ uint64_t GCOVFunction::getExitCount() const {
   return Blocks.back()->getCount();
 }
 
-/// dump - Dump GCOVFunction content to dbgs() for debugging purposes.
-void GCOVFunction::dump() const {
-  dbgs() << "===== " << Name << " (" << Ident << ") @ " << Filename << ":"
-         << LineNumber << "\n";
+void GCOVFunction::print(raw_ostream &OS) const {
+  OS << "===== " << Name << " (" << Ident << ") @ " << Filename << ":"
+     << LineNumber << "\n";
   for (const auto &Block : Blocks)
-    Block->dump();
+    Block->print(OS);
 }
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+/// dump - Dump GCOVFunction content to dbgs() for debugging purposes.
+LLVM_DUMP_METHOD void GCOVFunction::dump() const { print(dbgs()); }
+#endif
 
 /// collectLineCounts - Collect line counts. This must be used after
 /// reading .gcno and .gcda files.
@@ -445,10 +439,10 @@ void GCOVBlock::addCount(size_t DstEdgeNo, uint64_t N) {
 /// sortDstEdges - Sort destination edges by block number, nop if already
 /// sorted. This is required for printing branch info in the correct order.
 void GCOVBlock::sortDstEdges() {
-  if (!DstEdgesAreSorted) {
-    SortDstEdgesFunctor SortEdges;
-    std::stable_sort(DstEdges.begin(), DstEdges.end(), SortEdges);
-  }
+  if (!DstEdgesAreSorted)
+    llvm::stable_sort(DstEdges, [](const GCOVEdge *E1, const GCOVEdge *E2) {
+      return E1->Dst.Number < E2->Dst.Number;
+    });
 }
 
 /// collectLineCounts - Collect line counts. This must be used after
@@ -458,27 +452,156 @@ void GCOVBlock::collectLineCounts(FileInfo &FI) {
     FI.addBlockLine(Parent.getFilename(), N, this);
 }
 
-/// dump - Dump GCOVBlock content to dbgs() for debugging purposes.
-void GCOVBlock::dump() const {
-  dbgs() << "Block : " << Number << " Counter : " << Counter << "\n";
+void GCOVBlock::print(raw_ostream &OS) const {
+  OS << "Block : " << Number << " Counter : " << Counter << "\n";
   if (!SrcEdges.empty()) {
-    dbgs() << "\tSource Edges : ";
+    OS << "\tSource Edges : ";
     for (const GCOVEdge *Edge : SrcEdges)
-      dbgs() << Edge->Src.Number << " (" << Edge->Count << "), ";
-    dbgs() << "\n";
+      OS << Edge->Src.Number << " (" << Edge->Count << "), ";
+    OS << "\n";
   }
   if (!DstEdges.empty()) {
-    dbgs() << "\tDestination Edges : ";
+    OS << "\tDestination Edges : ";
     for (const GCOVEdge *Edge : DstEdges)
-      dbgs() << Edge->Dst.Number << " (" << Edge->Count << "), ";
-    dbgs() << "\n";
+      OS << Edge->Dst.Number << " (" << Edge->Count << "), ";
+    OS << "\n";
   }
   if (!Lines.empty()) {
-    dbgs() << "\tLines : ";
+    OS << "\tLines : ";
     for (uint32_t N : Lines)
-      dbgs() << (N) << ",";
-    dbgs() << "\n";
+      OS << (N) << ",";
+    OS << "\n";
   }
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+/// dump - Dump GCOVBlock content to dbgs() for debugging purposes.
+LLVM_DUMP_METHOD void GCOVBlock::dump() const { print(dbgs()); }
+#endif
+
+//===----------------------------------------------------------------------===//
+// Cycles detection
+//
+// The algorithm in GCC is based on the algorihtm by Hawick & James:
+//   "Enumerating Circuits and Loops in Graphs with Self-Arcs and Multiple-Arcs"
+//   http://complexity.massey.ac.nz/cstn/013/cstn-013.pdf.
+
+/// Get the count for the detected cycle.
+uint64_t GCOVBlock::getCycleCount(const Edges &Path) {
+  uint64_t CycleCount = std::numeric_limits<uint64_t>::max();
+  for (auto E : Path) {
+    CycleCount = std::min(E->CyclesCount, CycleCount);
+  }
+  for (auto E : Path) {
+    E->CyclesCount -= CycleCount;
+  }
+  return CycleCount;
+}
+
+/// Unblock a vertex previously marked as blocked.
+void GCOVBlock::unblock(const GCOVBlock *U, BlockVector &Blocked,
+                        BlockVectorLists &BlockLists) {
+  auto it = find(Blocked, U);
+  if (it == Blocked.end()) {
+    return;
+  }
+
+  const size_t index = it - Blocked.begin();
+  Blocked.erase(it);
+
+  const BlockVector ToUnblock(BlockLists[index]);
+  BlockLists.erase(BlockLists.begin() + index);
+  for (auto GB : ToUnblock) {
+    GCOVBlock::unblock(GB, Blocked, BlockLists);
+  }
+}
+
+bool GCOVBlock::lookForCircuit(const GCOVBlock *V, const GCOVBlock *Start,
+                               Edges &Path, BlockVector &Blocked,
+                               BlockVectorLists &BlockLists,
+                               const BlockVector &Blocks, uint64_t &Count) {
+  Blocked.push_back(V);
+  BlockLists.emplace_back(BlockVector());
+  bool FoundCircuit = false;
+
+  for (auto E : V->dsts()) {
+    const GCOVBlock *W = &E->Dst;
+    if (W < Start || find(Blocks, W) == Blocks.end()) {
+      continue;
+    }
+
+    Path.push_back(E);
+
+    if (W == Start) {
+      // We've a cycle.
+      Count += GCOVBlock::getCycleCount(Path);
+      FoundCircuit = true;
+    } else if (find(Blocked, W) == Blocked.end() && // W is not blocked.
+               GCOVBlock::lookForCircuit(W, Start, Path, Blocked, BlockLists,
+                                         Blocks, Count)) {
+      FoundCircuit = true;
+    }
+
+    Path.pop_back();
+  }
+
+  if (FoundCircuit) {
+    GCOVBlock::unblock(V, Blocked, BlockLists);
+  } else {
+    for (auto E : V->dsts()) {
+      const GCOVBlock *W = &E->Dst;
+      if (W < Start || find(Blocks, W) == Blocks.end()) {
+        continue;
+      }
+      const size_t index = find(Blocked, W) - Blocked.begin();
+      BlockVector &List = BlockLists[index];
+      if (find(List, V) == List.end()) {
+        List.push_back(V);
+      }
+    }
+  }
+
+  return FoundCircuit;
+}
+
+/// Get the count for the list of blocks which lie on the same line.
+void GCOVBlock::getCyclesCount(const BlockVector &Blocks, uint64_t &Count) {
+  for (auto Block : Blocks) {
+    Edges Path;
+    BlockVector Blocked;
+    BlockVectorLists BlockLists;
+
+    GCOVBlock::lookForCircuit(Block, Block, Path, Blocked, BlockLists, Blocks,
+                              Count);
+  }
+}
+
+/// Get the count for the list of blocks which lie on the same line.
+uint64_t GCOVBlock::getLineCount(const BlockVector &Blocks) {
+  uint64_t Count = 0;
+
+  for (auto Block : Blocks) {
+    if (Block->getNumSrcEdges() == 0) {
+      // The block has no predecessors and a non-null counter
+      // (can be the case with entry block in functions).
+      Count += Block->getCount();
+    } else {
+      // Add counts from predecessors that are not on the same line.
+      for (auto E : Block->srcs()) {
+        const GCOVBlock *W = &E->Src;
+        if (find(Blocks, W) == Blocks.end()) {
+          Count += E->Count;
+        }
+      }
+    }
+    for (auto E : Block->dsts()) {
+      E->CyclesCount = E->Count;
+    }
+  }
+
+  GCOVBlock::getCyclesCount(Blocks, Count);
+
+  return Count;
 }
 
 //===----------------------------------------------------------------------===//
@@ -510,7 +633,7 @@ static uint32_t branchDiv(uint64_t Numerator, uint64_t Divisor) {
 
 namespace {
 struct formatBranchInfo {
-  formatBranchInfo(const GCOVOptions &Options, uint64_t Count, uint64_t Total)
+  formatBranchInfo(const GCOV::Options &Options, uint64_t Count, uint64_t Total)
       : Options(Options), Count(Count), Total(Total) {}
 
   void print(raw_ostream &OS) const {
@@ -522,7 +645,7 @@ struct formatBranchInfo {
       OS << "taken " << branchDiv(Count, Total) << "%";
   }
 
-  const GCOVOptions &Options;
+  const GCOV::Options &Options;
   uint64_t Count;
   uint64_t Total;
 };
@@ -558,7 +681,7 @@ public:
     OS << format("%5u:", LineNum) << Line << "\n";
   }
 };
-}
+} // end anonymous namespace
 
 /// Convert a path to a gcov filename. If PreservePaths is true, this
 /// translates "/" to "#", ".." to "^", and drops ".", to match gcov.
@@ -607,7 +730,15 @@ std::string FileInfo::getCoveragePath(StringRef Filename,
   if (Options.LongFileNames && !Filename.equals(MainFilename))
     CoveragePath =
         mangleCoveragePath(MainFilename, Options.PreservePaths) + "##";
-  CoveragePath += mangleCoveragePath(Filename, Options.PreservePaths) + ".gcov";
+  CoveragePath += mangleCoveragePath(Filename, Options.PreservePaths);
+  if (Options.HashFilenames) {
+    MD5 Hasher;
+    MD5::MD5Result Result;
+    Hasher.update(Filename.str());
+    Hasher.final(Result);
+    CoveragePath += "##" + Result.digest().str().str();
+  }
+  CoveragePath += ".gcov";
   return CoveragePath;
 }
 
@@ -617,8 +748,8 @@ FileInfo::openCoveragePath(StringRef CoveragePath) {
     return llvm::make_unique<raw_null_ostream>();
 
   std::error_code EC;
-  auto OS = llvm::make_unique<raw_fd_ostream>(CoveragePath, EC,
-                                              sys::fs::F_Text);
+  auto OS =
+      llvm::make_unique<raw_fd_ostream>(CoveragePath, EC, sys::fs::F_Text);
   if (EC) {
     errs() << EC.message() << "\n";
     return llvm::make_unique<raw_null_ostream>();
@@ -629,8 +760,12 @@ FileInfo::openCoveragePath(StringRef CoveragePath) {
 /// print -  Print source files with collected line count information.
 void FileInfo::print(raw_ostream &InfoOS, StringRef MainFilename,
                      StringRef GCNOFile, StringRef GCDAFile) {
-  for (const auto &LI : LineInfo) {
-    StringRef Filename = LI.first();
+  SmallVector<StringRef, 4> Filenames;
+  for (const auto &LI : LineInfo)
+    Filenames.push_back(LI.first());
+  llvm::sort(Filenames);
+
+  for (StringRef Filename : Filenames) {
     auto AllLines = LineConsumer(Filename);
 
     std::string CoveragePath = getCoveragePath(Filename, MainFilename);
@@ -643,7 +778,7 @@ void FileInfo::print(raw_ostream &InfoOS, StringRef MainFilename,
     CovOS << "        -:    0:Runs:" << RunCount << "\n";
     CovOS << "        -:    0:Programs:" << ProgramCount << "\n";
 
-    const LineData &Line = LI.second;
+    const LineData &Line = LineInfo[Filename];
     GCOVCoverage FileCoverage(Filename);
     for (uint32_t LineIndex = 0; LineIndex < Line.LastLine || !AllLines.empty();
          ++LineIndex) {
@@ -663,17 +798,7 @@ void FileInfo::print(raw_ostream &InfoOS, StringRef MainFilename,
 
         // Add up the block counts to form line counts.
         DenseMap<const GCOVFunction *, bool> LineExecs;
-        uint64_t LineCount = 0;
         for (const GCOVBlock *Block : Blocks) {
-          if (Options.AllBlocks) {
-            // Only take the highest block count for that line.
-            uint64_t BlockCount = Block->getCount();
-            LineCount = LineCount > BlockCount ? LineCount : BlockCount;
-          } else {
-            // Sum up all of the block counts.
-            LineCount += Block->getCount();
-          }
-
           if (Options.FuncCoverage) {
             // This is a slightly convoluted way to most accurately gather line
             // statistics for functions. Basically what is happening is that we
@@ -709,6 +834,7 @@ void FileInfo::print(raw_ostream &InfoOS, StringRef MainFilename,
           }
         }
 
+        const uint64_t LineCount = GCOVBlock::getLineCount(Blocks);
         if (LineCount == 0)
           CovOS << "    #####:";
         else {
@@ -745,7 +871,6 @@ void FileInfo::print(raw_ostream &InfoOS, StringRef MainFilename,
   if (Options.FuncCoverage)
     printFuncCoverage(InfoOS);
   printFileCoverage(InfoOS);
-  return;
 }
 
 /// printFunctionSummary - Print function and block summary.

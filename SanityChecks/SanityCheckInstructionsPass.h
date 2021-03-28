@@ -1,7 +1,7 @@
 // This file is part of ASAP.
 // Please see LICENSE.txt for copyright and licensing information.
 
-#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Pass.h"
 
 #include <map>
@@ -27,8 +27,8 @@ struct SanityCheckInstructionsPass : public llvm::ModulePass {
     }
 
     // Types used to store sanity check blocks / instructions
-    typedef llvm::SmallPtrSet<llvm::BasicBlock*, 64> BlockSet;
-    typedef llvm::SmallPtrSet<llvm::Instruction*, 64> InstructionSet;
+    typedef llvm::DenseSet<llvm::BasicBlock*> BlockSet;
+    typedef llvm::DenseSet<llvm::Instruction*> InstructionSet;
 
     const InstructionSet &getSanityCheckBranches(llvm::Function *F) const {
         return SanityCheckBranches.at(F);
