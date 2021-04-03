@@ -5,10 +5,11 @@
 
 #include <utility>
 #include <vector>
+#include "llvm/ProfileData/GCOV.h"
 
-namespace sanitychecks {
-    class GCOVFile;
-}
+//namespace sanitychecks {
+//    class GCOVFile;
+//}
 
 namespace llvm {
     class BranchInst;
@@ -37,5 +38,5 @@ private:
 
     std::vector<CheckCost> CheckCosts;
     
-    sanitychecks::GCOVFile *createGCOVFile();
+    llvm::GCOVFile *createGCOVFile();
 };

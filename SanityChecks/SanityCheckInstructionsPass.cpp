@@ -5,6 +5,7 @@
 #include "utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Pass.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
@@ -18,7 +19,8 @@ using namespace llvm;
 
 bool SanityCheckInstructionsPass::runOnModule(Module &M) {
     for (Function &F: M) {
-        DEBUG(dbgs() << "SanityCheckInstructionsPass on " << F.getName() << "\n");
+        LLVM_DEBUG(dbgs() << "SanityCheckInstructionsPass on " << F.getName() << "\n");
+//        errs()<<F.getName()<<"\n";
         SanityCheckBlocks[&F] = BlockSet();
         SanityCheckInstructions[&F] = InstructionSet();
         SanityCheckBranches[&F] = InstructionSet();
@@ -26,6 +28,7 @@ bool SanityCheckInstructionsPass::runOnModule(Module &M) {
 
         MDNode *MD = MDNode::get(M.getContext(), {});
         for (Instruction *Inst: SanityCheckInstructions[&F]) {
+//            errs()<<*Inst<<"\n";
             Inst->setMetadata("sanitycheck", MD);
         }
     }
@@ -37,12 +40,12 @@ void SanityCheckInstructionsPass::findInstructions(Function *F) {
 
     // A list of instructions that are used by sanity checks. They become sanity
     // check instructions if it turns out they're not used by anything else.
-    SmallPtrSet<Instruction*, 128> Worklist;
+    DenseSet<Instruction*> Worklist;
     
     // A list of basic blocks that contain sanity check instructions. They
     // become sanity check blocks if it turns out they don't contain anything
     // else.
-    SmallPtrSet<BasicBlock*, 64>   BlockWorklist;
+    DenseSet<BasicBlock*>   BlockWorklist;
     
     // A map from instructions to the checks that use them.
     // RAHUL : Is this correct - why only 4?
@@ -159,4 +162,4 @@ bool SanityCheckInstructionsPass::onlyUsedInSanityChecks(Value* V) {
 char SanityCheckInstructionsPass::ID = 0;
 
 static RegisterPass<SanityCheckInstructionsPass> X("sanity-check-instructions",
-        "Finds instructions belonging to sanity checks", false, false);
+        "Finds instructions belonging to sanity checks", false, true);

@@ -16,12 +16,11 @@
 
 #include "GCOV.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/Config/llvm-config.h"
-#include "llvm/Demangle/Demangle.h"
 //#include "llvm/ProfileData/GCOV.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -36,8 +35,6 @@ using namespace llvm;
 using namespace sanitychecks;
 
 #define DEBUG_TYPE "sanitychecks-gcov"
-
-
 
 using namespace llvm;
 
@@ -111,18 +108,16 @@ private:
 //===----------------------------------------------------------------------===//
 // GCOVFile implementation.
 
-
 uint64_t GCOVFile::getCount(Instruction *Inst) const {
   BasicBlock *ParentB = Inst->getParent();
-  Function   *ParentF = Inst->getParent()->getParent();
+  Function *ParentF = Inst->getParent()->getParent();
   const GCOVFunction *F = getFunction(ParentF);
   if (!F) {
     // FIXME: Sometimes GCOV data seems to be missing some functions.
     // I haven't yet found out why this is so. I currently silently ignore
     // the issue, but this might cause problems.
-    dbgs() << "Warning: could not find function "
-                 << ParentF->getName()
-                 << " in GCOV data\n";
+    LLVM_DEBUG(dbgs() << "Warning: could not find function "
+                      << ParentF->getName() << " in GCOV data\n");
     return 0;
   }
 
@@ -136,31 +131,35 @@ uint64_t GCOVFile::getCount(Instruction *Inst) const {
   // It also adds a "return block", which is always the last block.
   // Hence the first and last block of the GCOVFunction are unused, and hence
   // the +2.
-  assert(ParentF->size() + 2 == F->getNumBlocks()
-         && "Function size does not match GCOV data?");
+  assert(ParentF->size() + 2 == F->getNumBlocks() &&
+         "Function size does not match GCOV data?");
   Function::iterator ParentBI = ParentF->begin();
   GCOVFunction::BlockIterator BI = F->block_begin();
-  ++BI;  // Skip split entry block
+  ++BI; // Skip split entry block
   while (ParentBI != ParentF->end() && &(*ParentBI) != ParentB) {
-    assert(((isa<ReturnInst>(ParentBI->getTerminator()) && BI->getNumDstEdges() == 1) ||
-            (ParentBI->getTerminator()->getNumSuccessors() == BI->getNumDstEdges()))
-           && "CFG mismatch: dst edges");
+    assert(((isa<ReturnInst>(ParentBI->getTerminator()) &&
+             BI->getNumDstEdges() == 1) ||
+            (ParentBI->getTerminator()->getNumSuccessors() ==
+             BI->getNumDstEdges())) &&
+           "CFG mismatch: dst edges");
     ++ParentBI;
     ++BI;
   }
-  assert(ParentBI != ParentF->end()
-         && "Basic block not a member of its parent function?.");
-  assert(ParentBI->getTerminator()->getNumSuccessors() == BI->getNumDstEdges()
-         && "CFG mismatch: dst edges");
+  assert(ParentBI != ParentF->end() &&
+         "Basic block not a member of its parent function?.");
+  assert(ParentBI->getTerminator()->getNumSuccessors() ==
+             BI->getNumDstEdges() &&
+         "CFG mismatch: dst edges");
 
   return BI->getCount();
 }
 
-const GCOVFunction *GCOVFile::getFunction(const Function* F) const {
+const GCOVFunction *GCOVFile::getFunction(const Function *F) const {
   for (const auto &Fptr : Functions) {
     // FIXME: somehow returning a pointer defeats the use of std::unique_ptr
     // here. Is there a way to do this properly?
-    if (Fptr->getName() == F->getName()) return Fptr.get();
+    if (Fptr->getName() == F->getName())
+      return Fptr.get();
   }
 
   return nullptr;

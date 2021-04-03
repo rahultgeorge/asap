@@ -12,7 +12,7 @@
 #include "SanityCheckCostPass.h"
 #include "SanityCheckInstructionsPass.h"
 #include "CostModel.h"
-#include "GCOV.h"
+//#include "GCOV.h"
 #include "utils.h"
 
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -49,7 +49,7 @@ namespace {
 bool SanityCheckCostPass::runOnModule(Module &M) {
     SanityCheckInstructionsPass &SCI = getAnalysis<SanityCheckInstructionsPass>();
     TargetTransformInfoWrapperPass &TTIWP = getAnalysis<TargetTransformInfoWrapperPass>();
-    std::unique_ptr<sanitychecks::GCOVFile> GF(createGCOVFile());
+    std::unique_ptr<GCOVFile> GF(createGCOVFile());
 
     for (Function &F: M) {
         dbgs() << "SanityCheckCostPass on " << F.getName() << "\n";
@@ -79,7 +79,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
                     CurrentCost = 1;
                 }
 
-                DEBUG(
+                LLVM_DEBUG(
                     if (CurrentCost == 0) {
                         nFreeInstructions += 1;
                     }
@@ -87,8 +87,8 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
 
                 assert(CurrentCost <= 100 && "Outlier cost value?");
 
-                Cost += CurrentCost * GF->getCount(CI);
-                DEBUG(nInstructions += 1) ;
+//                Cost += CurrentCost * GF->getCount(CI);
+                LLVM_DEBUG(nInstructions += 1) ;
             }
 
             APInt CountInt = APInt(64, Cost);
@@ -98,14 +98,14 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
             Inst->setMetadata("cost", MD);
             CheckCosts.push_back(std::make_pair(BI, Cost));
 
-            DEBUG(
+            LLVM_DEBUG(
                 dbgs() << "Sanity check: " << *BI << "\n";
                 unsigned int RegularBranch = getRegularBranch(BI, &SCI);
                 DebugLoc DL = getSanityCheckDebugLoc(BI, RegularBranch);
                 printDebugLoc(DL, M.getContext(), dbgs());
                 dbgs() << "\nnInstructions: " << nInstructions << "\n";
                 dbgs() << "nFreeInstructions: " << nFreeInstructions << "\n";
-                dbgs() << "Count: " << GF->getCount(BI) << "\n";
+//                dbgs() << "Count: " << GF->getCount(BI) << "\n";
                 dbgs() << "Cost: " << Cost << "\n";
             );
         }
@@ -134,8 +134,8 @@ void SanityCheckCostPass::print(raw_ostream &O, const Module *M) const {
     }
 }
 
-sanitychecks::GCOVFile *SanityCheckCostPass::createGCOVFile() {
-    sanitychecks::GCOVFile *GF = new sanitychecks::GCOVFile;
+GCOVFile *SanityCheckCostPass::createGCOVFile() {
+    GCOVFile *GF = new GCOVFile;
 
     if (InputGCNO.empty()) {
         report_fatal_error("Need to specify --gcno!");
@@ -145,7 +145,7 @@ sanitychecks::GCOVFile *SanityCheckCostPass::createGCOVFile() {
     if (std::error_code EC = GCNO_Buff.getError()) {
         report_fatal_error(InputGCNO + ":" + EC.message());
     }
-    sanitychecks::GCOVBuffer GCNO_GB(GCNO_Buff.get().get());
+    llvm::GCOVBuffer GCNO_GB(GCNO_Buff.get().get());
     if (!GF->readGCNO(GCNO_GB)) {
         report_fatal_error(InputGCNO + ": Invalid .gcno file!");
     }
@@ -158,7 +158,7 @@ sanitychecks::GCOVFile *SanityCheckCostPass::createGCOVFile() {
     if (std::error_code EC = GCDA_Buff.getError()) {
         report_fatal_error(InputGCDA + ":" + EC.message());
     }
-    sanitychecks::GCOVBuffer GCDA_GB(GCDA_Buff.get().get());
+    llvm::GCOVBuffer GCDA_GB(GCDA_Buff.get().get());
     if (!GF->readGCDA(GCDA_GB)) {
         report_fatal_error(InputGCDA + ": Invalid .gcda file!");
     }
