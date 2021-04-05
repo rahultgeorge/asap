@@ -1,168 +1,126 @@
 //===- GCOV.cpp - LLVM coverage tool --------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
 // GCOV implements the interface to read and write coverage files that use
 // 'gcov' format.
 //
-// Adapted for ASAP, from lib/IR/GCOV.cpp
-//
 //===----------------------------------------------------------------------===//
 
 #include "GCOV.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Config/llvm-config.h"
-#include "llvm/Demangle/Demangle.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Instructions.h"
-//#include "llvm/ProfileData/GCOV.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/MD5.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <system_error>
-#include <unordered_map>
-using namespace llvm;
-using namespace sanitychecks;
-
-#define DEBUG_TYPE "sanitychecks-gcov"
 
 using namespace llvm;
-
-enum : uint32_t {
-  GCOV_ARC_ON_TREE = 1 << 0,
-  GCOV_ARC_FALLTHROUGH = 1 << 2,
-
-  GCOV_TAG_FUNCTION = 0x01000000,
-  GCOV_TAG_BLOCKS = 0x01410000,
-  GCOV_TAG_ARCS = 0x01430000,
-  GCOV_TAG_LINES = 0x01450000,
-  GCOV_TAG_COUNTER_ARCS = 0x01a10000,
-  // GCOV_TAG_OBJECT_SUMMARY superseded GCOV_TAG_PROGRAM_SUMMARY in GCC 9.
-  GCOV_TAG_OBJECT_SUMMARY = 0xa1000000,
-  GCOV_TAG_PROGRAM_SUMMARY = 0xa3000000,
-};
-
-namespace {
-struct Summary {
-  Summary(StringRef Name) : Name(Name) {}
-
-  StringRef Name;
-  uint64_t lines = 0;
-  uint64_t linesExec = 0;
-  uint64_t branches = 0;
-  uint64_t branchesExec = 0;
-  uint64_t branchesTaken = 0;
-};
-
-struct LineInfo {
-  SmallVector<const GCOVBlock *, 1> blocks;
-  uint64_t count = 0;
-  bool exists = false;
-};
-
-struct SourceInfo {
-  StringRef filename;
-  SmallString<0> displayName;
-  std::vector<std::vector<const GCOVFunction *>> startLineToFunctions;
-  std::vector<LineInfo> lines;
-  bool ignored = false;
-  SourceInfo(StringRef filename) : filename(filename) {}
-};
-
-class Context {
-public:
-  Context(const GCOV::Options &Options) : options(Options) {}
-  void print(StringRef filename, StringRef gcno, StringRef gcda,
-             GCOVFile &file);
-
-private:
-  std::string getCoveragePath(StringRef filename, StringRef mainFilename) const;
-  void printFunctionDetails(const GCOVFunction &f, raw_ostream &os) const;
-  void printBranchInfo(const GCOVBlock &Block, uint32_t &edgeIdx,
-                       raw_ostream &OS) const;
-  void printSummary(const Summary &summary, raw_ostream &os) const;
-
-  void collectFunction(GCOVFunction &f, Summary &summary);
-  void collectSourceLine(SourceInfo &si, Summary *summary, LineInfo &line,
-                         size_t lineNum) const;
-  void collectSource(SourceInfo &si, Summary &summary) const;
-  void annotateSource(SourceInfo &si, const GCOVFile &file, StringRef gcno,
-                      StringRef gcda, raw_ostream &os) const;
-  void printSourceToIntermediate(const SourceInfo &si, raw_ostream &os) const;
-
-  const GCOV::Options &options;
-  std::vector<SourceInfo> sources;
-};
-} // namespace
-
+using namespace PDQ;
 //===----------------------------------------------------------------------===//
 // GCOVFile implementation.
 
-uint64_t GCOVFile::getCount(Instruction *Inst) const {
-  BasicBlock *ParentB = Inst->getParent();
-  Function *ParentF = Inst->getParent()->getParent();
-  const GCOVFunction *F = getFunction(ParentF);
-  if (!F) {
-    // FIXME: Sometimes GCOV data seems to be missing some functions.
-    // I haven't yet found out why this is so. I currently silently ignore
-    // the issue, but this might cause problems.
-    LLVM_DEBUG(dbgs() << "Warning: could not find function "
-                      << ParentF->getName() << " in GCOV data\n");
-    return 0;
+/// readGCNO - Read GCNO buffer.
+bool GCOVFile::readGCNO(GCOVBuffer &Buffer) {
+  if (!Buffer.readGCNOFormat())
+    return false;
+  if (!Buffer.readGCOVVersion(Version))
+    return false;
+
+  if (!Buffer.readInt(Checksum))
+    return false;
+  while (true) {
+    if (!Buffer.readFunctionTag())
+      break;
+    auto GFun = std::make_unique<GCOVFunction>(*this);
+    if (!GFun->readGCNO(Buffer, Version))
+      return false;
+    Functions.push_back(std::move(GFun));
   }
 
-  // Find the offset of the block inside its function, and take the GCOV block
-  // at the same offset.
-  // FIXME: This could break very easily, if the order in which GCOV handles
-  //        blocks changes... we try to assert on the shape of the CFG, but
-  //        there is no real guarantee.
-
-  // GCOVProfiler::emitProfileNotes() splits the entry block of the function.
-  // It also adds a "return block", which is always the last block.
-  // Hence the first and last block of the GCOVFunction are unused, and hence
-  // the +2.
-  assert(ParentF->size() + 2 == F->getNumBlocks() &&
-         "Function size does not match GCOV data?");
-  Function::iterator ParentBI = ParentF->begin();
-  GCOVFunction::BlockIterator BI = F->block_begin();
-  ++BI; // Skip split entry block
-  while (ParentBI != ParentF->end() && &(*ParentBI) != ParentB) {
-    assert(((isa<ReturnInst>(ParentBI->getTerminator()) &&
-             BI->getNumDstEdges() == 1) ||
-            (ParentBI->getTerminator()->getNumSuccessors() ==
-             BI->getNumDstEdges())) &&
-           "CFG mismatch: dst edges");
-    ++ParentBI;
-    ++BI;
-  }
-  assert(ParentBI != ParentF->end() &&
-         "Basic block not a member of its parent function?.");
-  assert(ParentBI->getTerminator()->getNumSuccessors() ==
-             BI->getNumDstEdges() &&
-         "CFG mismatch: dst edges");
-
-  return BI->getCount();
+  GCNOInitialized = true;
+  return true;
 }
 
-const GCOVFunction *GCOVFile::getFunction(const Function *F) const {
-  for (const auto &Fptr : Functions) {
-    // FIXME: somehow returning a pointer defeats the use of std::unique_ptr
-    // here. Is there a way to do this properly?
-    if (Fptr->getName() == F->getName())
-      return Fptr.get();
+/// readGCDA - Read GCDA buffer. It is required that readGCDA() can only be
+/// called after readGCNO().
+bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
+  assert(GCNOInitialized && "readGCDA() can only be called after readGCNO()");
+  if (!Buffer.readGCDAFormat())
+    return false;
+  GCOV::GCOVVersion GCDAVersion;
+  if (!Buffer.readGCOVVersion(GCDAVersion))
+    return false;
+  if (Version != GCDAVersion) {
+    errs() << "GCOV versions do not match.\n";
+    return false;
   }
 
-  return nullptr;
+  uint32_t GCDAChecksum;
+  if (!Buffer.readInt(GCDAChecksum))
+    return false;
+  if (Checksum != GCDAChecksum) {
+    errs() << "File checksums do not match: " << Checksum
+           << " != " << GCDAChecksum << ".\n";
+    return false;
+  }
+  for (size_t i = 0, e = Functions.size(); i < e; ++i) {
+    if (!Buffer.readFunctionTag()) {
+      errs() << "Unexpected number of functions.\n";
+      return false;
+    }
+    if (!Functions[i]->readGCDA(Buffer, Version))
+      return false;
+  }
+  if (Buffer.readObjectTag()) {
+    uint32_t Length;
+    uint32_t Dummy;
+    if (!Buffer.readInt(Length))
+      return false;
+    if (!Buffer.readInt(Dummy))
+      return false; // checksum
+    if (!Buffer.readInt(Dummy))
+      return false; // num
+    if (!Buffer.readInt(RunCount))
+      return false;
+    Buffer.advanceCursor(Length - 3);
+  }
+  while (Buffer.readProgramTag()) {
+    uint32_t Length;
+    if (!Buffer.readInt(Length))
+      return false;
+    Buffer.advanceCursor(Length);
+    ++ProgramCount;
+  }
+
+  return true;
+}
+
+void GCOVFile::print(raw_ostream &OS) const {
+  for (const auto &FPtr : Functions)
+    FPtr->print(OS);
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+/// dump - Dump GCOVFile content to dbgs() for debugging purposes.
+LLVM_DUMP_METHOD void GCOVFile::dump() const { print(dbgs()); }
+#endif
+
+/// collectLineCounts - Collect line counts. This must be used after
+/// reading .gcno and .gcda files.
+void GCOVFile::collectLineCounts(FileInfo &FI) {
+  for (const auto &FPtr : Functions)
+    FPtr->collectLineCounts(FI);
+  FI.setRunCount(RunCount);
+  FI.setProgramCount(ProgramCount);
 }
 
 //===----------------------------------------------------------------------===//
@@ -206,7 +164,7 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
   for (uint32_t i = 0, e = BlockCount; i != e; ++i) {
     if (!Buff.readInt(Dummy))
       return false; // Block flags;
-    Blocks.push_back(make_unique<GCOVBlock>(*this, i));
+    Blocks.push_back(std::make_unique<GCOVBlock>(*this, i));
   }
 
   // read edges.
@@ -227,7 +185,7 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
       uint32_t Dst;
       if (!Buff.readInt(Dst))
         return false;
-      Edges.push_back(make_unique<GCOVEdge>(*Blocks[BlockNo], *Blocks[Dst]));
+      Edges.push_back(std::make_unique<GCOVEdge>(*Blocks[BlockNo], *Blocks[Dst]));
       GCOVEdge *Edge = Edges.back().get();
       Blocks[BlockNo]->addDstEdge(Edge);
       Blocks[Dst]->addSrcEdge(Edge);
@@ -744,14 +702,14 @@ std::string FileInfo::getCoveragePath(StringRef Filename,
 std::unique_ptr<raw_ostream>
 FileInfo::openCoveragePath(StringRef CoveragePath) {
   if (Options.NoOutput)
-    return llvm::make_unique<raw_null_ostream>();
+    return std::make_unique<raw_null_ostream>();
 
   std::error_code EC;
   auto OS =
-      llvm::make_unique<raw_fd_ostream>(CoveragePath, EC, sys::fs::F_Text);
+      std::make_unique<raw_fd_ostream>(CoveragePath, EC, sys::fs::OF_Text);
   if (EC) {
     errs() << EC.message() << "\n";
-    return llvm::make_unique<raw_null_ostream>();
+    return std::make_unique<raw_null_ostream>();
   }
   return std::move(OS);
 }

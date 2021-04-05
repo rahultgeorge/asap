@@ -4,7 +4,7 @@
 #cmake_minimum_required(VERSION 3.16)
 #project(SanityChecks)
 
-#set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 
 include(GNUInstallDirs)
 include_directories("/usr/local/include")
@@ -14,21 +14,26 @@ include_directories("/usr/local/include")
 #include_directories(${LLVM_INCLUDE_DIRS})
 #link_directories(${LLVM_LIBRARY_DIRS})
 
+set(LLVM_LINK_COMPONENTS  core object support coverage profiledata)
+
 add_library(SanityChecks MODULE
           AsapPass.cpp
           CostModel.cpp
+	  GCOV.cpp
           ExitInsteadOfAbortPass.cpp
-        SanityCheckCostPass.h
         SanityCheckCostPass.cpp
         SanityCheckInstructionsPass.cpp
-        SanityCheckInstructionsPass.h
-        utils.h
         utils.cpp
         )
 
-#add_dependencies(SanityChecks LLVMInstrumentation)
+add_dependencies(SanityChecks LLVMInstrumentation)
+add_dependencies(SanityChecks LLVMCoverage)
+add_dependencies(SanityChecks LLVMSupport)
+add_dependencies(SanityChecks LLVMProfileData)
+
 find_library(NEO4J_CLIENT neo4j-client)
-target_link_libraries(SanityChecks PUBLIC "${NEO4J_CLIENT}")
+
+target_link_libraries(SanityChecks "${NEO4J_CLIENT}")
 
 
 # Use C++11 to compile your pass (i.e., supply -std=c++11).

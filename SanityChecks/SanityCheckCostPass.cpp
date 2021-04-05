@@ -12,7 +12,6 @@
 #include "SanityCheckCostPass.h"
 #include "SanityCheckInstructionsPass.h"
 #include "CostModel.h"
-//#include "GCOV.h"
 #include "utils.h"
 
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -21,9 +20,13 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/Errc.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 
 #include <algorithm>
 #include <memory>
@@ -49,7 +52,7 @@ namespace {
 bool SanityCheckCostPass::runOnModule(Module &M) {
     SanityCheckInstructionsPass &SCI = getAnalysis<SanityCheckInstructionsPass>();
     TargetTransformInfoWrapperPass &TTIWP = getAnalysis<TargetTransformInfoWrapperPass>();
-    std::unique_ptr<GCOVFile> GF(createGCOVFile());
+    GCOVFile GF=createGCOVFile();
 
     for (Function &F: M) {
         dbgs() << "SanityCheckCostPass on " << F.getName() << "\n";
@@ -134,8 +137,8 @@ void SanityCheckCostPass::print(raw_ostream &O, const Module *M) const {
     }
 }
 
-GCOVFile *SanityCheckCostPass::createGCOVFile() {
-    GCOVFile *GF = new GCOVFile;
+GCOVFile SanityCheckCostPass::createGCOVFile() {
+    GCOVFile GF ;
 
     if (InputGCNO.empty()) {
         report_fatal_error("Need to specify --gcno!");
@@ -145,21 +148,30 @@ GCOVFile *SanityCheckCostPass::createGCOVFile() {
     if (std::error_code EC = GCNO_Buff.getError()) {
         report_fatal_error(InputGCNO + ":" + EC.message());
     }
-    llvm::GCOVBuffer GCNO_GB(GCNO_Buff.get().get());
-    if (!GF->readGCNO(GCNO_GB)) {
-        report_fatal_error(InputGCNO + ": Invalid .gcno file!");
+
+    GCOVBuffer GCNO_GB(GCNO_Buff.get().get());
+
+    if (!GF.readGCNO(GCNO_GB)) {
+errs() << "Invalid .gcno File!\n";
+        //report_fatal_error(InputGCNO + ": Invalid .gcno file!");
     }
+
 
     if (InputGCDA.empty()) {
         report_fatal_error("Need to specify --gcda!");
     }
+
     ErrorOr<std::unique_ptr<MemoryBuffer>> GCDA_Buff =
         MemoryBuffer::getFileOrSTDIN(InputGCDA);
     if (std::error_code EC = GCDA_Buff.getError()) {
+        errs()<<"Invalid gcda file\n";
+
         report_fatal_error(InputGCDA + ":" + EC.message());
     }
-    llvm::GCOVBuffer GCDA_GB(GCDA_Buff.get().get());
-    if (!GF->readGCDA(GCDA_GB)) {
+
+   GCOVBuffer GCDA_GB(GCDA_Buff.get().get());
+    if (!GF.readGCDA(GCDA_GB)) {
+        errs()<<"Invalid gcda file\n";
         report_fatal_error(InputGCDA + ": Invalid .gcda file!");
     }
 

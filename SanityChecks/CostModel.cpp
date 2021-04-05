@@ -35,7 +35,7 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
-static cl::opt<bool> EnableReduxCost("sanity-check-costmodel-reduxcost",
+static cl::opt<bool> EnableReduxCost("sanity-check-reduxcost",
                                      cl::init(false), cl::Hidden,
                                      cl::desc("Recognize reduction patterns."));
 
