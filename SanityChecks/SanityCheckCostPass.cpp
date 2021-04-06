@@ -52,7 +52,8 @@ namespace {
 bool SanityCheckCostPass::runOnModule(Module &M) {
     SanityCheckInstructionsPass &SCI = getAnalysis<SanityCheckInstructionsPass>();
     TargetTransformInfoWrapperPass &TTIWP = getAnalysis<TargetTransformInfoWrapperPass>();
-    GCOVFile GF=createGCOVFile();
+      std::unique_ptr<GCOVFile> GF(createGCOVFile());
+
 
     for (Function &F: M) {
         dbgs() << "SanityCheckCostPass on " << F.getName() << "\n";
@@ -63,7 +64,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
             
             BranchInst *BI = dyn_cast<BranchInst>(Inst);
             assert(BI && BI->isConditional() && "SanityCheckBranches must not contain instructions that aren't conditional branches.");
-
+            errs()<<*BI<<"\n";
 #ifndef NDEBUG
             int nInstructions = 0;
             int nFreeInstructions = 0;
@@ -76,7 +77,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
             uint64_t Cost = 0;
             for (Instruction *CI: SCI.getInstructionsBySanityCheck(BI)) {
                 unsigned CurrentCost = sanitychecks::getInstructionCost(CI, &TTI);
-
+                errs()<<"\t"<<*CI<<"\n";
                 // Assume a default cost of 1 for unknown instructions
                 if (CurrentCost == (unsigned)(-1)) {
                     CurrentCost = 1;
@@ -90,7 +91,7 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
 
                 assert(CurrentCost <= 100 && "Outlier cost value?");
 
-//                Cost += CurrentCost * GF->getCount(CI);
+                Cost += CurrentCost * GF->getCount(CI);
                 LLVM_DEBUG(nInstructions += 1) ;
             }
 
@@ -108,14 +109,14 @@ bool SanityCheckCostPass::runOnModule(Module &M) {
                 printDebugLoc(DL, M.getContext(), dbgs());
                 dbgs() << "\nnInstructions: " << nInstructions << "\n";
                 dbgs() << "nFreeInstructions: " << nFreeInstructions << "\n";
-//                dbgs() << "Count: " << GF->getCount(BI) << "\n";
+               dbgs() << "Count: " << GF->getCount(BI) << "\n";
                 dbgs() << "Cost: " << Cost << "\n";
             );
         }
     }
 
     std::sort(CheckCosts.begin(), CheckCosts.end(), largerCost);
-    
+    //GF->print(errs());    
     return false;
 }
 
@@ -137,8 +138,9 @@ void SanityCheckCostPass::print(raw_ostream &O, const Module *M) const {
     }
 }
 
-GCOVFile SanityCheckCostPass::createGCOVFile() {
-    GCOVFile GF ;
+GCOVFile *SanityCheckCostPass::createGCOVFile() {
+     GCOVFile *GF = new GCOVFile;
+
 
     if (InputGCNO.empty()) {
         report_fatal_error("Need to specify --gcno!");
@@ -151,8 +153,8 @@ GCOVFile SanityCheckCostPass::createGCOVFile() {
 
     GCOVBuffer GCNO_GB(GCNO_Buff.get().get());
 
-    if (!GF.readGCNO(GCNO_GB)) {
-errs() << "Invalid .gcno File!\n";
+    if (!GF->readGCNO(GCNO_GB)) {
+         errs() << "Invalid .gcno File!\n";
         //report_fatal_error(InputGCNO + ": Invalid .gcno file!");
     }
 
@@ -165,12 +167,11 @@ errs() << "Invalid .gcno File!\n";
         MemoryBuffer::getFileOrSTDIN(InputGCDA);
     if (std::error_code EC = GCDA_Buff.getError()) {
         errs()<<"Invalid gcda file\n";
-
         report_fatal_error(InputGCDA + ":" + EC.message());
     }
 
    GCOVBuffer GCDA_GB(GCDA_Buff.get().get());
-    if (!GF.readGCDA(GCDA_GB)) {
+    if (!GF->readGCDA(GCDA_GB)) {
         errs()<<"Invalid gcda file\n";
         report_fatal_error(InputGCDA + ": Invalid .gcda file!");
     }

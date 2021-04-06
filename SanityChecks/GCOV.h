@@ -23,6 +23,8 @@
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/Support/Debug.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -253,6 +255,8 @@ public:
   void print(raw_ostream &OS) const;
   void dump() const;
   void collectLineCounts(FileInfo &FI);
+  // PDQ : Returns the number of times a given instruction has been executed.
+  uint64_t getCount(Instruction *Inst) const;
 
 private:
   bool GCNOInitialized = false;
@@ -261,6 +265,10 @@ private:
   SmallVector<std::unique_ptr<GCOVFunction>, 16> Functions;
   uint32_t RunCount = 0;
   uint32_t ProgramCount = 0;
+
+  //  PDQ Finds the GCOVFunction corresponding to the given LLVM function
+  // FIXME this is not very reliable, as we find functions by name only.
+  const GCOVFunction *getFunction(const llvm::Function *F) const;
 };
 
 /// GCOVEdge - Collects edge information.
@@ -276,6 +284,7 @@ struct GCOVEdge {
 /// GCOVFunction - Collects function information.
 class GCOVFunction {
 public:
+
   using BlockIterator = pointee_iterator<
       SmallVectorImpl<std::unique_ptr<GCOVBlock>>::const_iterator>;
 
@@ -298,7 +307,8 @@ public:
   void print(raw_ostream &OS) const;
   void dump() const;
   void collectLineCounts(FileInfo &FI);
-
+  std::string name;
+  std::string fileName;
 private:
   GCOVFile &Parent;
   uint32_t Ident = 0;
@@ -471,3 +481,4 @@ protected:
 } // end namespace llvm
 
 #endif // LLVM_SUPPORT_GCOV_H
+

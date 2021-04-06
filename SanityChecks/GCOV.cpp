@@ -17,14 +17,18 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/Path.h"
 #include "llvm/Support/MD5.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <system_error>
 
 using namespace llvm;
 using namespace PDQ;
+
+#define DEBUG_TYPE "sanitychecks-gcov"
+
+
 //===----------------------------------------------------------------------===//
 // GCOVFile implementation.
 
@@ -79,6 +83,9 @@ bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
     }
     if (!Functions[i]->readGCDA(Buffer, Version))
       return false;
+      //PDQ : New simple strings to keep track of function names etc
+      Functions[i]->name=Functions[i]->getName().str();
+      Functions[i]->fileName=Functions[i]->getFilename().str();
   }
   if (Buffer.readObjectTag()) {
     uint32_t Length;
@@ -101,6 +108,7 @@ bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
     ++ProgramCount;
   }
 
+  
   return true;
 }
 
@@ -121,6 +129,78 @@ void GCOVFile::collectLineCounts(FileInfo &FI) {
     FPtr->collectLineCounts(FI);
   FI.setRunCount(RunCount);
   FI.setProgramCount(ProgramCount);
+}
+
+/// PDQ - Ported Sanity check's custom functions (NEW API)
+uint64_t GCOVFile::getCount(Instruction *Inst) const {
+  BasicBlock *ParentB = Inst->getParent();
+  Function *ParentF = Inst->getParent()->getParent();
+
+for (const auto &Fptr : Functions) {
+ 
+  errs()<< "# blocks:"<< Fptr->getNumBlocks()<<"\n";
+   errs()<<"Function in function small vector:"<< Fptr->name<<"\n";
+   Fptr->dump();
+}
+
+
+  const GCOVFunction *F = getFunction(ParentF);
+  if (!F) {
+    // FIXME: Sometimes GCOV data seems to be missing some functions.
+    // I haven't yet found out why this is so. I currently silently ignore
+    // the issue, but this might cause problems.
+    LLVM_DEBUG(dbgs() << "Warning: could not find function "
+                      << ParentF->getName() << " in GCOV data\n");
+    errs() << "Warning: could not find function:" << ParentF->getName()
+           << " in GCOV data\n";
+    return 0;
+  }
+
+  // Find the offset of the block inside its function, and take the GCOV block
+  // at the same offset.
+  // FIXME: This could break very easily, if the order in which GCOV handles
+  //        blocks changes... we try to assert on the shape of the CFG, but
+  //        there is no real guarantee.
+
+  // GCOVProfiler::emitProfileNotes() splits the entry block of the function.
+  // It also adds a "return block", which is always the last block.
+  // Hence the first and last block of the GCOVFunction are unused, and hence
+  // the +2.
+  assert(ParentF->size() + 2 == F->getNumBlocks() &&
+         "Function size does not match GCOV data?");
+  Function::iterator ParentBI = ParentF->begin();
+  GCOVFunction::BlockIterator BI = F->block_begin();
+  ++BI; // Skip split entry block
+  while (ParentBI != ParentF->end() && &(*ParentBI) != ParentB) {
+    assert(((isa<ReturnInst>(ParentBI->getTerminator()) &&
+             BI->getNumDstEdges() == 1) ||
+            (ParentBI->getTerminator()->getNumSuccessors() ==
+             BI->getNumDstEdges())) &&
+           "CFG mismatch: dst edges");
+    ++ParentBI;
+    ++BI;
+  }
+  assert(ParentBI != ParentF->end() &&
+         "Basic block not a member of its parent function?.");
+  assert(ParentBI->getTerminator()->getNumSuccessors() ==
+             BI->getNumDstEdges() &&
+         "CFG mismatch: dst edges");
+
+  return BI->getCount();
+}
+
+/// PDQ - Ported Sanity check's custom functions (NEW API)
+const GCOVFunction *GCOVFile::getFunction(const Function *F) const {
+  for (const auto &Fptr : Functions) {
+    // FIXME: somehow returning a pointer defeats the use of std::unique_ptr
+    // here. Is there a way to do this properly?
+//  errs()<< "File name:"<<Fptr->getFilename().str()<<"\n";
+ //  errs()<<"Function in function small vector:"<< Fptr->getName()<<","<< F->getName() <<"\n";
+   if (Fptr->name == F->getName())
+      return Fptr.get();
+  }
+
+  return nullptr;
 }
 
 //===----------------------------------------------------------------------===//
@@ -185,7 +265,8 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
       uint32_t Dst;
       if (!Buff.readInt(Dst))
         return false;
-      Edges.push_back(std::make_unique<GCOVEdge>(*Blocks[BlockNo], *Blocks[Dst]));
+      Edges.push_back(
+          std::make_unique<GCOVEdge>(*Blocks[BlockNo], *Blocks[Dst]));
       GCOVEdge *Edge = Edges.back().get();
       Blocks[BlockNo]->addDstEdge(Edge);
       Blocks[Dst]->addSrcEdge(Edge);
@@ -938,3 +1019,4 @@ void FileInfo::printFileCoverage(raw_ostream &OS) const {
     OS << "\n";
   }
 }
+

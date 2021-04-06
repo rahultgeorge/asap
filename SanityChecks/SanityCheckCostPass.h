@@ -42,5 +42,5 @@ private:
 
     std::vector<CheckCost> CheckCosts;
     
-    GCOVFile createGCOVFile();
+    GCOVFile* createGCOVFile();
 };
