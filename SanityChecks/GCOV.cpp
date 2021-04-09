@@ -28,7 +28,6 @@ using namespace PDQ;
 
 #define DEBUG_TYPE "sanitychecks-gcov"
 
-
 //===----------------------------------------------------------------------===//
 // GCOVFile implementation.
 
@@ -56,6 +55,8 @@ bool GCOVFile::readGCNO(GCOVBuffer &Buffer) {
 
 /// readGCDA - Read GCDA buffer. It is required that readGCDA() can only be
 /// called after readGCNO().
+// PDQ: MODIFIED THIS TO DEAL WITH THE VANISHING STRINGS
+// TODO - Fix missing strings issue
 bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
   assert(GCNOInitialized && "readGCDA() can only be called after readGCNO()");
   if (!Buffer.readGCDAFormat())
@@ -83,9 +84,9 @@ bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
     }
     if (!Functions[i]->readGCDA(Buffer, Version))
       return false;
-      //PDQ : New simple strings to keep track of function names etc
-      Functions[i]->name=Functions[i]->getName().str();
-      Functions[i]->fileName=Functions[i]->getFilename().str();
+    // PDQ : New simple strings to keep track of function names etc
+    Functions[i]->name = Functions[i]->getName().str();
+    Functions[i]->fileName = Functions[i]->getFilename().str();
   }
   if (Buffer.readObjectTag()) {
     uint32_t Length;
@@ -108,7 +109,6 @@ bool GCOVFile::readGCDA(GCOVBuffer &Buffer) {
     ++ProgramCount;
   }
 
-  
   return true;
 }
 
@@ -134,16 +134,7 @@ void GCOVFile::collectLineCounts(FileInfo &FI) {
 /// PDQ - Ported Sanity check's custom functions (NEW API)
 uint64_t GCOVFile::getCount(Instruction *Inst) const {
   BasicBlock *ParentB = Inst->getParent();
-  Function *ParentF = Inst->getParent()->getParent();
-
-for (const auto &Fptr : Functions) {
- 
-  errs()<< "# blocks:"<< Fptr->getNumBlocks()<<"\n";
-   errs()<<"Function in function small vector:"<< Fptr->name<<"\n";
-   Fptr->dump();
-}
-
-
+  Function *ParentF = Inst->getFunction();
   const GCOVFunction *F = getFunction(ParentF);
   if (!F) {
     // FIXME: Sometimes GCOV data seems to be missing some functions.
@@ -166,10 +157,16 @@ for (const auto &Fptr : Functions) {
   // It also adds a "return block", which is always the last block.
   // Hence the first and last block of the GCOVFunction are unused, and hence
   // the +2.
+
+  errs() << "# BBs in program:" << ParentF->size() << "\n";
+  errs() << "# BBs in gcov function:" << F->getNumBlocks() << "\n";
+
   assert(ParentF->size() + 2 == F->getNumBlocks() &&
          "Function size does not match GCOV data?");
+
   Function::iterator ParentBI = ParentF->begin();
   GCOVFunction::BlockIterator BI = F->block_begin();
+
   ++BI; // Skip split entry block
   while (ParentBI != ParentF->end() && &(*ParentBI) != ParentB) {
     assert(((isa<ReturnInst>(ParentBI->getTerminator()) &&
@@ -187,6 +184,7 @@ for (const auto &Fptr : Functions) {
          "CFG mismatch: dst edges");
 
   return BI->getCount();
+
 }
 
 /// PDQ - Ported Sanity check's custom functions (NEW API)
@@ -194,9 +192,10 @@ const GCOVFunction *GCOVFile::getFunction(const Function *F) const {
   for (const auto &Fptr : Functions) {
     // FIXME: somehow returning a pointer defeats the use of std::unique_ptr
     // here. Is there a way to do this properly?
-//  errs()<< "File name:"<<Fptr->getFilename().str()<<"\n";
- //  errs()<<"Function in function small vector:"<< Fptr->getName()<<","<< F->getName() <<"\n";
-   if (Fptr->name == F->getName())
+    //  errs()<< "File name:"<<Fptr->getFilename().str()<<"\n";
+    //  errs()<<"Function in function small vector:"<< Fptr->getName()<<","<<
+    //  F->getName() <<"\n";
+    if (Fptr->name == F->getName())
       return Fptr.get();
   }
 

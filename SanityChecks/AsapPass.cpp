@@ -192,7 +192,8 @@ bool AsapPass::handleHotCheckRemoved(llvm::Instruction *Inst) {
 bool AsapPass::isSafeStackObject(BranchInst *branchInst) {
   unsigned int RegularBranch;
   BasicBlock *memoryAccessBasicBlock;
-  Instruction *memoryAccessInstruction;
+  Instruction *memoryAccessInstruction=NULL;
+  Value* value;
 
   // Step 1: Find the regular branch
   RegularBranch = getRegularBranch(branchInst, SCI);
@@ -202,18 +203,29 @@ bool AsapPass::isSafeStackObject(BranchInst *branchInst) {
     memoryAccessBasicBlock = branchInst->getSuccessor(RegularBranch);
     for (auto it = memoryAccessBasicBlock->begin();
          it != memoryAccessBasicBlock->end(); it++) {
+      errs()<<*it<<" inst in memory access BB\n";
       // TODO Should this be more robust
       if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
+        value = loadInst->getOperand(0);
+	errs()<<"\t"<<*value<<"\n";
+        errs()<<"\t type:"<< *(value->getType())<<"\n";
+        if( value->getType()->isArrayTy())
         memoryAccessInstruction = loadInst;
-      } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
+      } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {        
+        value = storeInst->getPointerOperand();
+        errs()<<"\t"<<*value<<"\n";
+        errs()<<"\t type:"<< *(value->getType())<<"\n";
+        if( value->getType()->isArrayTy())
         memoryAccessInstruction = storeInst;
       }
     }
-    errs() << "Instruction:" << *memoryAccessInstruction << "\n";
+   if(memoryAccessInstruction){ 
+    errs() << "Memory access instruction:" << *memoryAccessInstruction << "\n";
     return !checkIfUnsafePointerAction(memoryAccessInstruction);
+    }  
   }
   // Conservative - if we can't figure out the memory access operation let's
-  // classify it as unsafe
+  // classify it as unsafe (NEEDED)
   return false;
 }
 

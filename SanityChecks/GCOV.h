@@ -386,6 +386,7 @@ public:
                              const BlockVector &Blocks, uint64_t &Count);
   static void getCyclesCount(const BlockVector &Blocks, uint64_t &Count);
   static uint64_t getLineCount(const BlockVector &Blocks);
+  SmallVector<uint32_t, 16> Lines;
 
 private:
   GCOVFunction &Parent;
@@ -394,7 +395,6 @@ private:
   bool DstEdgesAreSorted = true;
   SmallVector<GCOVEdge *, 16> SrcEdges;
   SmallVector<GCOVEdge *, 16> DstEdges;
-  SmallVector<uint32_t, 16> Lines;
 };
 
 class FileInfo {
