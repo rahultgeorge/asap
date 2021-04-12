@@ -210,8 +210,12 @@ class AsapInitialCompiler < BaseCompiler
         clang_args = insert_arg(clang_args, '-gline-tables-only')
         clang_args = insert_arg(clang_args, '-flto')
         clang_args = ['-Xclang', '-femit-coverage-notes'] + clang_args
+        clang_args = ['-Xclang', "-coverage-data-file=#{gcda_name}"] + clang_args
+        clang_args = ['-Xclang', "-coverage-notes-file=#{gcno_name}"] + clang_args
 
         run!(clang, *clang_args)
+        log("Init compiler clang args:#{clang_args}")
+        log("Init compiler  target name:#{target_name}, gcno name:#{gcno_name},gcda name:#{gcda_name} and org name:#{orig_name} ")
 
         # If this lead to an instrumented bitcode file, copy it.
         # Also, run llc to generate a native object file instead of a bitcode file,
@@ -223,7 +227,7 @@ class AsapInitialCompiler < BaseCompiler
           opt_level = get_optlevel_for_llc(clang_args)
           run!(find_llc(), opt_level, '-filetype=obj', '-relocation-model=pic',
                '-o', target_name, orig_name)
-
+          log("Init compiler gcno name:#{gcno_name},gcda name:#{gcda_name} and org name:#{orig_name} ")
           # If everthing so far worked, return happily
           return
         end
@@ -234,6 +238,7 @@ class AsapInitialCompiler < BaseCompiler
 
     # If we arrive here, some of the previous steps failed, so just run the
     # command normally.
+    log("Init compiler: failed so running the command normally")
     super
   end
 end
@@ -244,15 +249,18 @@ class AsapProfilingCompiler < BaseCompiler
 
   def do_compile(cmd)
     target_name = get_arg(cmd, '-o')
+    log("Profiling compiler target name: #{target_name}")
     return super unless target_name and target_name.end_with?('.o')
 
     # Check whether an .orig.o file exists. Otherwise, ASAP should not touch
     # the current target.
     orig_name = mangle(state.objects_path(target_name), '.o', '.orig.o')
+    log("Profiling compiler orginal name: #{orig_name} ")
     return super unless File.file?(orig_name)
 
     # Original file exists; create the target from there
     gcov_name = mangle(state.objects_path(target_name), '.o', '.gcov.o')
+    log("Profiling compiler orginal name: #{orig_name}, gcov name: #{gcov_name} ")   
     opt_level = get_optlevel_for_llc(cmd)
     run!(find_opt(), '-insert-gcov-profiling',
               '-o', gcov_name,
@@ -264,7 +272,8 @@ class AsapProfilingCompiler < BaseCompiler
   def do_link(cmd)
     linker_args = cmd[1..-1]
     linker_args = insert_arg(linker_args, '-coverage')
-
+    #linker_args = insert_arg(linker_args, '-lgcov')
+    log("Profiling compiler linker args: #{linker_args}")
     super([cmd[0]] + linker_args)
   end
 end
@@ -316,9 +325,11 @@ end
 # Finds all sanity checks and computes their cost
 def compute_costs(state)
   gcda_files = []
+  log("Coverage directory : #{state.coverage_directory}")
   Dir.chdir(state.coverage_directory) do |coverage_dir|
     gcda_files = Dir.glob('**/*.gcda')
   end
+  log("Compute costs:#{gcda_files}")
 
   Parallel.each(gcda_files) do |gcda_basename|
     gcda_name = File.join(state.coverage_directory, gcda_basename)
@@ -327,7 +338,7 @@ def compute_costs(state)
     costs_name = mangle(File.join(state.costs_directory, gcda_basename), '.gcda', '.costs')
 
     FileUtils.mkdir_p(File.dirname(costs_name))
-
+    log("Coverage directory : #{gcda_name},#{gcno_name}, #{costs_name}, #{orig_name}, #{find_asap_lib()}")
     run!(find_opt(),
          '-load', find_asap_lib(),
          '-analyze', '-sanity-check-cost',
@@ -468,6 +479,7 @@ end
 
 def main(argv)
   command = get_arg(argv, /^-asap-[a-z0-9-]+$/, :first)
+  log("Command: #{command}")
   if command.nil?
     # We are being run like a regular compilation tool.
 
@@ -523,3 +535,4 @@ def main(argv)
 end
 
 main(ARGV)
+#log("test")

@@ -6,6 +6,7 @@
 require 'shellwords'
 
 SCRIPT_DIR = File.dirname($0)
+LOG_FILE_NAME ="pdq_log.txt"
 
 # Running external commands
 # =========================
@@ -63,8 +64,10 @@ def find_ar()
 end
 
 def find_asap_lib()
-  ["#{SCRIPT_DIR}/../lib/SanityChecks.dylib",
-   "#{SCRIPT_DIR}/../lib/SanityChecks.so"].find { |f| File.file?(f) }
+  soPath=File.expand_path('../lib/libSanityChecks.so', SCRIPT_DIR)
+  puts "#{SCRIPT_DIR} #{soPath}"
+  
+  ["#{soPath}"].find { |f| File.file?(f) }
 end
 
 
@@ -129,4 +132,14 @@ end
 def get_optlevel_for_llc(args)
   # Don't use /^-O.$/ here, because llc only knows numeric levels
   get_arg(args, /^-O[0123]$/, :last) || '-O3'
+end
+
+
+# PDQ - logging
+def log(message)
+    puts "Logging: #{message}"
+    File.open(LOG_FILE_NAME, "a+") do |logFile|
+        logFile.syswrite(message+"\n")
+    end
+    return true
 end
