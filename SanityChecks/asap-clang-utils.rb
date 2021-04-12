@@ -64,10 +64,11 @@ def find_ar()
 end
 
 def find_asap_lib()
-  soPath=File.expand_path('../lib/libSanityChecks.so', SCRIPT_DIR)
-  puts "#{SCRIPT_DIR} #{soPath}"
+  #soPath=File.expand_path('../lib/libSanityChecks.so', SCRIPT_DIR)
+  #puts "#{SCRIPT_DIR} #{soPath}"
+  ["#{SCRIPT_DIR}/../lib/libSanityChecks.dylib",
+   "#{SCRIPT_DIR}/../lib/libSanityChecks.so"].find { |f| File.file?(f) }  
   
-  ["#{soPath}"].find { |f| File.file?(f) }
 end
 
 
