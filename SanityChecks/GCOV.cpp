@@ -161,6 +161,7 @@ uint64_t GCOVFile::getCount(Instruction *Inst) const {
   errs() << "# BBs in program:" << ParentF->size() << "\n";
   errs() << "# BBs in gcov function:" << F->getNumBlocks() << "\n";
 
+  //PDQ We've disabled emit coverage notes. No idea why one BB is still added and whether this breaks anything else
   assert(ParentF->size() + 2 == F->getNumBlocks() &&
          "Function size does not match GCOV data?");
 

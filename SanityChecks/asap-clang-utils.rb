@@ -138,7 +138,7 @@ end
 
 # PDQ - logging
 def log(message)
-    puts "Logging: #{message}"
+    #puts "Logging: #{message}"
     File.open(LOG_FILE_NAME, "a+") do |logFile|
         logFile.syswrite(message+"\n")
     end
