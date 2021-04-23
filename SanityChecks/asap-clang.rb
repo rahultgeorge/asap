@@ -302,7 +302,7 @@ class AsapOptimizingCompiler < BaseCompiler
     # Original file exists; create the target from there
     asap_name = mangle(state.objects_path(target_name), '.o', '.asap.o')
     opt_name = mangle(state.objects_path(target_name), '.o', '.asap.opt.o')
-    #log_name  = mangle(state.log_path(target_name), '.o', '.asap.log')
+    log_name  = mangle(state.log_path(target_name), '.o', '.asap.log')
     opt_level = get_optlevel_for_llc(cmd)
     FileUtils.mkdir_p(File.dirname(log_name))
     run!(find_opt(),

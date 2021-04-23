@@ -21,12 +21,13 @@ fi
 
 fetch_bzip2() {
     [ -d bzip2 ] && return 0
-    [ -f bzip2-1.0.6.tar.gz ] || wget 'http://www.bzip.org/1.0.6/bzip2-1.0.6.tar.gz'
-    sha256sum --check "$SCRIPT_DIR/bzip2-1.0.6.sha256"
-    tar -xzf bzip2-1.0.6.tar.gz
-    mv bzip2-1.0.6 bzip2
+    [ -f bzip2-latest.tar.gz ] || wget 'https://www.sourceware.org/pub/bzip2/bzip2-latest.tar.gz'
+    #sha256sum --check "$SCRIPT_DIR/bzip2-1.0.6.sha256"
+    #tar -xzf bzip2-1.0.6.tar.gz
+    mv bzip2-1.0.8 bzip2
     (
         cd bzip2
+	# Is this patch fine/correct for the latest bzip2?
         patch -p1 < "$SCRIPT_DIR/bzip2_asap.patch"
     )
 }
@@ -34,9 +35,9 @@ fetch_bzip2() {
 build_bzip2() {
     local extra_cflags="$1"
     local ldflags="$2"
+    echo "Inside buid function""$@"
     make clean
-    make -j "$N_PROCESSORS" \
-         CC="$(which asap-clang)" \
+    make  -j=2 CC="$(which asap-clang)" \
          CFLAGS="-Wall -Winline -O3 -g -D_FILE_OFFSET_BITS=64 $extra_cflags" \
          LDFLAGS="$ldflags" \
          all
@@ -49,19 +50,21 @@ configure_and_build_bzip2() {
 
 fetch_bzip2
 
+echo "Trying initial vanilla build"
 build_asap_initial "bzip2" "baseline" "configure_and_build_bzip2" "" ""
+echo "Initial build with asan"
 build_asap_initial "bzip2" "asan"     "configure_and_build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
-build_asap_initial "bzip2" "ubsan"    "configure_and_build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
+#build_asap_initial "bzip2" "ubsan"    "configure_and_build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
 
 build_asap_coverage "bzip2" "asan"  "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
-build_asap_coverage "bzip2" "ubsan" "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
+#build_asap_coverage "bzip2" "ubsan" "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
 
 build_asap_optimized "bzip2" "asan" "s0000" "-asap-sanity-level=0.000" "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
 build_asap_optimized "bzip2" "asan" "c0010" "-asap-cost-level=0.010"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
 build_asap_optimized "bzip2" "asan" "c0040" "-asap-cost-level=0.040"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
 build_asap_optimized "bzip2" "asan" "c1000" "-asap-cost-level=1.000"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
 
-build_asap_optimized "bzip2" "ubsan" "s0000" "-asap-sanity-level=0.000" "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
-build_asap_optimized "bzip2" "ubsan" "c0010" "-asap-cost-level=0.010"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
-build_asap_optimized "bzip2" "ubsan" "c0040" "-asap-cost-level=0.040"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
-build_asap_optimized "bzip2" "ubsan" "c1000" "-asap-cost-level=1.000"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
+#build_asap_optimized "bzip2" "ubsan" "s0000" "-asap-sanity-level=0.000" "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
+#build_asap_optimized "bzip2" "ubsan" "c0010" "-asap-cost-level=0.010"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
+#build_asap_optimized "bzip2" "ubsan" "c0040" "-asap-cost-level=0.040"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
+#build_asap_optimized "bzip2" "ubsan" "c1000" "-asap-cost-level=1.000"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
