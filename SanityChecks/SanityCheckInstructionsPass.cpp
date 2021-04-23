@@ -29,7 +29,7 @@ bool SanityCheckInstructionsPass::runOnModule(Module &M) {
         MDNode *MD = MDNode::get(M.getContext(), {});
         for (Instruction *Inst: SanityCheckInstructions[&F]) {
 //            errs()<<*Inst<<"\n";
-            Inst->setMetadata("sanitycheck", MD);
+//            Inst->setMetadata("sanitycheck", MD);
         }
     }
     

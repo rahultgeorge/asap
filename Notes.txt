@@ -50,3 +50,34 @@ AsapPass - removes checks (Optimizes)
 
 
 Cost is Cost model cost * gcov freq
+
+
+
+  -femit-coverage-notes   Emit a gcov coverage notes file when compiling.
+    (gcno)
+-flto  - Link time optimization leads to bitcode being generated (why??)
+
+
+  -femit-coverage-notes is the reason the profiling is not working
+
+  Is the single bitcode file approach better
+
+
+
+
+what is -Xclang
+
+-Xclang that allows me to manually manage LLVM passes triggered by Clang.
+
+
+Need to be able to write coverage data to a custom folder
+
+Cannot find the right flag
+
+Or would have to rewrite script (This might still not work in case of larger programs)
+
+
+
+Python
+
+Hg - mercurial
