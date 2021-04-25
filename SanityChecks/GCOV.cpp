@@ -158,8 +158,8 @@ uint64_t GCOVFile::getCount(Instruction *Inst) const {
   // Hence the first and last block of the GCOVFunction are unused, and hence
   // the +2.
 
-  errs() << "# BBs in program:" << ParentF->size() << "\n";
-  errs() << "# BBs in gcov function:" << F->getNumBlocks() << "\n";
+ //errs() << "# BBs in program:" << ParentF->size() << "\n";
+ //errs() << "# BBs in gcov function:" << F->getNumBlocks() << "\n";
 
   //PDQ We've disabled emit coverage notes. No idea why one BB is still added and whether this breaks anything else
   assert(ParentF->size() + 2 == F->getNumBlocks() &&
