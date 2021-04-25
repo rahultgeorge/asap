@@ -45,5 +45,8 @@ private:
   // Method to check the operation is safe (Should be sound - unsafe should be complete)
   bool isSafeOperation(llvm::BranchInst *branchInst);
 
+  //PDQ: Method to find the actual memory access operation in the basic block
+  llvm::Instruction* findMemoryAccessInstruction(llvm::BasicBlock* basicBlock);
+
   bool checkIfUnsafePointerAction(llvm::Instruction *instruction);
 };

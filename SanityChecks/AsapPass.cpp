@@ -3,8 +3,8 @@
 
 #include "AsapPass.h"
 
-#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -76,17 +76,18 @@ bool AsapPass::runOnModule(Module &M) {
   // simply remove the first few.
   uint64_t RemovedCost = 0;
   size_t NChecksRemoved = 0;
-
-  //PDQ: New variables to remove statically proven safe operations as these do ot incur any cost (sanity level)
+  int checkNumber = 1;
+  // PDQ: New variables to remove statically proven safe operations as these do
+  // ot incur any cost (sanity level)
   uint64_t safeChecksRemovedCost = 0;
   size_t safeNChecksRemoved = 0;
-    errs()<<"Initial sanity level:"<<SanityLevel<<"\n";  
+  errs() << "Initial cost  threshold:" << CostThreshold << "\n";
 
   // PDQ: We simulate the ASAP run without actually removing the checks just to
   // record the # checks removed
   // PDQ: We could also measure the impact of the checks removed
   for (const SanityCheckCostPass::CheckCost &I : SCC->getCheckCosts()) {
-
+    errs() << "Check " << checkNumber << *(I.first) << "\n";
     // Elision based on sanity level and
     if (SanityLevel >= 0.0) {
       if ((NChecksRemoved + 1) > TotalChecks * (1.0 - SanityLevel)) {
@@ -113,6 +114,7 @@ bool AsapPass::runOnModule(Module &M) {
       RemovedCost += I.second;
       NChecksRemoved += 1;
     }
+    ++checkNumber;
   }
 
   errs() << "ASAP:"
@@ -129,15 +131,15 @@ bool AsapPass::runOnModule(Module &M) {
 
   // PDQ: Resetting these variables and therefore we can actually use PDQ to
   // remove checks
-  
-  
+  checkNumber = 1;
   RemovedCost = 0;
   NChecksRemoved = 0;
-  errs()<<"PDQ Sanity level"<<SanityLevel<<"\n";  
+  errs() << "PDQ cost threshold level" << CostThreshold << "\n";
   for (const SanityCheckCostPass::CheckCost &I : SCC->getCheckCosts()) {
+    errs() << "Check " << checkNumber << *(I.first) << "\n";
     if (isSafeOperation(I.first)) {
       if (optimizeCheckAway(I.first)) {
-        errs()<<"Safe operation found"<<safeNChecksRemoved<<"\n";
+        errs() << "Safe operation found" << safeNChecksRemoved << "\n";
         safeChecksRemovedCost += I.second;
         safeNChecksRemoved += 1;
       }
@@ -146,7 +148,8 @@ bool AsapPass::runOnModule(Module &M) {
     // monitor. PDQ: Here on we use ASAP logic that is we incur the cost and
     // remove the check as per the budget
     else {
-      errs()<<"Unsafe operation found"<<NChecksRemoved<<RemovedCost << "\n";
+      errs() << "Unsafe operation found" << NChecksRemoved << RemovedCost
+             << "\n";
       // Elision based on sanity level and
       if (SanityLevel >= 0.0) {
         if ((NChecksRemoved + 1) > TotalChecks * (1.0 - SanityLevel)) {
@@ -175,20 +178,26 @@ bool AsapPass::runOnModule(Module &M) {
         // TODO - New method to add new checks
         // PDQ: We should handle hot checks/important checks
         handleHotCheckRemoved(I.first);
-      }
-      else
-         errs()<<"Unable to remove check\n";
+      } else
+        errs() << "Unable to remove check\n";
     }
+    ++checkNumber;
   }
- errs()<<"Safe objects checks removed:"<<safeNChecksRemoved<<","<<safeChecksRemovedCost<<"\n";
- errs()<<"un safe objects checks removed:"<<NChecksRemoved<<","<<RemovedCost<<"\n";
+
+  errs() << "Safe objects checks removed:" << safeNChecksRemoved << ","
+         << safeChecksRemovedCost << "\n";
+  errs() << "Unsafe objects hot checks removed:" << NChecksRemoved << ","
+         << RemovedCost << "\n";
 
   NChecksRemoved += safeNChecksRemoved;
-  RemovedCost +=safeChecksRemovedCost;
- errs()<<"un safe objects checks removed:"<<NChecksRemoved<<","<<RemovedCost<<"\n";
+  RemovedCost += safeChecksRemovedCost;
+  errs() << "Unsafe objects checks removed:" << NChecksRemoved << ","
+         << RemovedCost << "\n";
 
   errs() << "PDQ:"
-         << "\n\t# checks removed:" << NChecksRemoved
+         << "\n\t# checks removed (safe objects):" << safeNChecksRemoved
+         << "\n\t# total checks removed:" << NChecksRemoved
+         << "\n\tRemoved cost (safe objects):" << safeChecksRemovedCost
          << "\n\tRemoved cost:" << RemovedCost
          << "\n\t Total # checks:" << TotalChecks << "\n";
 
@@ -294,13 +303,11 @@ bool AsapPass::handleHotCheckRemoved(llvm::Instruction *Inst) {
   return false;
 }
 
-// Explicit only for now
 bool AsapPass::isSafeOperation(BranchInst *branchInst) {
   unsigned int RegularBranch;
   BasicBlock *memoryAccessBasicBlock;
   Instruction *memoryAccessInstruction = NULL;
-  Value *value;
-  bool isDeclaredOnStack=true;
+  bool isDeclaredOnStack = true;
   const TargetLibraryInfo *TLI = NULL;
 
   // Step 1: Find the regular branch
@@ -309,28 +316,8 @@ bool AsapPass::isSafeOperation(BranchInst *branchInst) {
   // Step 2 - Find the actual memory access operation
   if (RegularBranch != (unsigned)(-1)) {
     memoryAccessBasicBlock = branchInst->getSuccessor(RegularBranch);
-    for (auto it = memoryAccessBasicBlock->begin();
-         it != memoryAccessBasicBlock->end(); it++) {
-      errs() << *it << " inst in memory access BB\n";
-      // TODO Should this be more robust
-      if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
-        value = loadInst->getOperand(0);
-        errs() << "\t" << *value << "\n";
-        errs() << "\t type:" << *(value->getType()) << "\n";
-        if (dyn_cast<GetElementPtrInst>(value))
-          memoryAccessInstruction = loadInst;
-      } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
-        value = storeInst->getPointerOperand();
-        errs() << "\t" << *value << "\n";
-        errs() << "\t type:" << *(value->getType()) << "\n";
-        if (dyn_cast<GetElementPtrInst>(value))
-          memoryAccessInstruction = storeInst;
-      }
-      if (memoryAccessInstruction) {
-        errs() << "\t Memory access instruction:" << *memoryAccessInstruction
-               << "\n";
-      }
-    }
+    memoryAccessInstruction =
+        findMemoryAccessInstruction(memoryAccessBasicBlock);
   }
 
   // Step 3 - Check the actual operation
@@ -361,8 +348,52 @@ bool AsapPass::isSafeOperation(BranchInst *branchInst) {
   return false;
 }
 
+llvm::Instruction *AsapPass::findMemoryAccessInstruction(
+    llvm::BasicBlock *memoryAccessBasicBlock) {
+  Instruction *memoryAccessInstruction = NULL;
+  int numOfMemoryAccessInstructions = 0;
+  Value *value;
+
+  errs() << "Instructions in memory basic block\n";
+
+  // First iterate and check if there is more than one memory access instruction
+  for (auto it = memoryAccessBasicBlock->begin();
+       it != memoryAccessBasicBlock->end(); it++) {
+    errs() << *it << "\n";
+    if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
+      memoryAccessInstruction = loadInst;
+      ++numOfMemoryAccessInstructions;
+    } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
+      memoryAccessInstruction = storeInst;
+      ++numOfMemoryAccessInstructions;
+    }
+  }
+  // PDQ: If we could not find it or are unsure then we handle that
+  if (numOfMemoryAccessInstructions == 1) {
+    errs()<<"Memory access instruction:"<<*memoryAccessInstruction<<"\n";
+    return memoryAccessInstruction;
+  }
+  else {
+    // If there are "conflicts" try to resolve using isArrayOperation
+    // PDQ : This is ASAN specific
+    numOfMemoryAccessInstructions = 0;
+    for (auto it = memoryAccessBasicBlock->begin();
+         it != memoryAccessBasicBlock->end(); it++) {
+      errs() << *it << "\n";
+      if(isItAnArrayOperation(*it))
+      {
+        memoryAccessInstruction=*it;
+        ++numOfMemoryAccessInstructions;
+      }
+    }
+
+    return numOfMemoryAccessInstructions == 1 ? memoryAccessInstruction : NULL;
+  }
+}
+
 bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
-  // TODO - Deal with uses of unsafe pointers that can be triggered by control flow
+  // TODO - Deal with uses of unsafe pointers that can be triggered by control
+  // flow
   std::string statement;
   std::string programNodeLabel = "";
   std::string instructionString = "";
@@ -415,11 +446,11 @@ bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
   neo4j_close(connection);
   if (programNodeLabel.empty())
     return false;
-  errs()<<"*** PDQ: FOUND AN UNSAFE POINTER ACTION:"<<*instruction<< ","<< programNodeLabel <<"\n";
+  errs() << "*** PDQ: FOUND AN UNSAFE POINTER ACTION:" << *instruction << ","
+         << programNodeLabel << "\n";
   return true;
 }
 
 char AsapPass::ID = 0;
 static RegisterPass<AsapPass> X("asap", "Removes too costly sanity checks",
                                 false, false);
-

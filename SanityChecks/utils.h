@@ -2,16 +2,16 @@
 // Please see LICENSE.txt for copyright and licensing information.
 
 #ifndef SANITYCHECKS_UTILS_H
-#define	SANITYCHECKS_UTILS_H
+#define SANITYCHECKS_UTILS_H
 
 #include "llvm/IR/DebugLoc.h"
 
 namespace llvm {
-    class BranchInst;
-    class CallInst;
-    class LLVMContext;
-    class raw_ostream;
-}
+class BranchInst;
+class CallInst;
+class LLVMContext;
+class raw_ostream;
+} // namespace llvm
 
 struct SanityCheckInstructionsPass;
 
@@ -23,14 +23,15 @@ bool isAbortingCall(const llvm::CallInst *CI);
 // that continues program execution. Returns (unsigned) -1 if such a branch does
 // not exist.
 unsigned int getRegularBranch(llvm::BranchInst *BI,
-        SanityCheckInstructionsPass *SCI);
+                              SanityCheckInstructionsPass *SCI);
 
 // Returns the debug location of a sanity check.
 llvm::DebugLoc getSanityCheckDebugLoc(llvm::BranchInst *BI,
-        unsigned int RegularBranch);
+                                      unsigned int RegularBranch);
 
-void printDebugLoc(const llvm::DebugLoc& DbgLoc, llvm::LLVMContext &Ctx,
-        llvm::raw_ostream &Outs);
+void printDebugLoc(const llvm::DebugLoc &DbgLoc, llvm::LLVMContext &Ctx,
+                   llvm::raw_ostream &Outs);
 
-#endif	/* SANITYCHECKS_UTILS_H */
+bool isItAnArrayOperation(llvm::Instruction *instruction);
 
+#endif /* SANITYCHECKS_UTILS_H */
