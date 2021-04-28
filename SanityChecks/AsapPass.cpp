@@ -46,7 +46,8 @@ bool AsapPass::runOnModule(Module &M) {
   // PDQ:  Fetch program name
   programName = M.getModuleIdentifier();
   programName = programName.substr(0, programName.length() - 3);
-
+  errs()<<"PDQ::Program name:"<<programName<<"\n";
+  programName="bzip2";
   // Check whether we got the right amount of parameters
   int nParams = 0;
   if (SanityLevel >= 0.0)
@@ -140,7 +141,7 @@ bool AsapPass::runOnModule(Module &M) {
     // PDQ :: Configurable - different dimensions
     if (isSafeOperation(I.first)) {
       if (optimizeCheckAway(I.first)) {
-        errs() << "Safe operation found" << safeNChecksRemoved << "\n";
+        errs() << "Safe operation found:" << safeNChecksRemoved << "\n";
         safeChecksRemovedCost += I.second;
         safeNChecksRemoved += 1;
       }
@@ -149,7 +150,7 @@ bool AsapPass::runOnModule(Module &M) {
     // monitor. PDQ: Here on we use ASAP logic that is we incur the cost and
     // remove the check as per the budget
     else {
-      errs() << "Unsafe operation found" << NChecksRemoved << RemovedCost
+      errs() << "Unsafe operation found:" << NChecksRemoved <<",cost:"<< RemovedCost
              << "\n";
       // Elision based on sanity level and
       if (SanityLevel >= 0.0) {
