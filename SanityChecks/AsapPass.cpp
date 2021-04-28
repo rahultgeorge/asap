@@ -137,6 +137,7 @@ bool AsapPass::runOnModule(Module &M) {
   errs() << "PDQ cost threshold level" << CostThreshold << "\n";
   for (const SanityCheckCostPass::CheckCost &I : SCC->getCheckCosts()) {
     errs() << "Check " << checkNumber << *(I.first) << "\n";
+    // PDQ :: Configurable - different dimensions
     if (isSafeOperation(I.first)) {
       if (optimizeCheckAway(I.first)) {
         errs() << "Safe operation found" << safeNChecksRemoved << "\n";
@@ -339,6 +340,8 @@ bool AsapPass::isSafeOperation(BranchInst *branchInst) {
         isDeclaredOnStack = false;
     }
     if (isDeclaredOnStack)
+      // PDQ: This method determines if we care about this particular use of an
+      // unsafe pointer
       return !checkIfUnsafePointerAction(memoryAccessInstruction);
   }
 
@@ -352,48 +355,27 @@ llvm::Instruction *AsapPass::findMemoryAccessInstruction(
     llvm::BasicBlock *memoryAccessBasicBlock) {
   Instruction *memoryAccessInstruction = NULL;
   int numOfMemoryAccessInstructions = 0;
-  Value *value;
 
   errs() << "Instructions in memory basic block\n";
 
-  // First iterate and check if there is more than one memory access instruction
+  // PDQ: the operation it protects is the first one
+  // PDQ: Also ASAN also implements compile time optimizations wrt checks
+  // therefore the first one is sufficient
   for (auto it = memoryAccessBasicBlock->begin();
        it != memoryAccessBasicBlock->end(); it++) {
-    errs() << *it << "\n";
+    errs() << "PDQ:" << *it << "\n";
     if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
       memoryAccessInstruction = loadInst;
-      ++numOfMemoryAccessInstructions;
+      break;
     } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
       memoryAccessInstruction = storeInst;
-      ++numOfMemoryAccessInstructions;
+      break;
     }
   }
-  // PDQ: If we could not find it or are unsure then we handle that
-  if (numOfMemoryAccessInstructions == 1) {
-    errs()<<"Memory access instruction:"<<*memoryAccessInstruction<<"\n";
-    return memoryAccessInstruction;
-  }
-  else {
-    // If there are "conflicts" try to resolve using isArrayOperation
-    // PDQ : This is ASAN specific
-    numOfMemoryAccessInstructions = 0;
-    for (auto it = memoryAccessBasicBlock->begin();
-         it != memoryAccessBasicBlock->end(); it++) {
-      errs() << *it << "\n";
-      if(isItAnArrayOperation(*it))
-      {
-        memoryAccessInstruction=*it;
-        ++numOfMemoryAccessInstructions;
-      }
-    }
-
-    return numOfMemoryAccessInstructions == 1 ? memoryAccessInstruction : NULL;
-  }
+  return memoryAccessInstruction;
 }
 
 bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
-  // TODO - Deal with uses of unsafe pointers that can be triggered by control
-  // flow
   std::string statement;
   std::string programNodeLabel = "";
   std::string instructionString = "";
@@ -427,23 +409,36 @@ bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
   mapEntries[2] = neo4j_map_entry("instruction", instructionValue);
   mapEntries[3] = neo4j_map_entry("function_name", functionNameValue);
 
-  statement = " MATCH (a:AttackGraphNode)-[:EDGE]->(p:ProgramInstruction) "
-              "WHERE a.program_name=p.program_name=$program_name AND "
-              "a.type=$action_type AND p.instruction CONTAINS $instruction AND "
-              "p.function_name=$function_name RETURN p.label";
-  params = neo4j_map(mapEntries, 4);
-  connection = neo4j_connect("neo4j://neo4j:secret@localhost:7687", NULL,
-                             NEO4J_INSECURE);
-  results = neo4j_run(connection, statement.c_str(), params);
-  // There should only be one record
-  if ((record = neo4j_fetch_next(results)) != NULL) {
-    neo4j_ntostring(neo4j_result_field(record, 0), field, 500);
-    programNodeLabel = std::string(field);
-    programNodeLabel =
-        programNodeLabel.substr(1, programNodeLabel.length() - 2);
+  if(PDQ_ELISION_LEVEL==PDQElisionLevels::DataOnlyUnsafe) {
+    errs()<<"PDQ::Data only UPA mode\n";
+    // We only retain checks for unsafes uses where the data is controlled
+    statement =
+        " MATCH (a:AttackGraphNode)-[:EDGE]->(p:ProgramInstruction) "
+        "WHERE a.program_name=p.program_name=$program_name AND "
+        "a.type=$action_type AND p.instruction CONTAINS $instruction AND "
+        "p.function_name=$function_name RETURN p.label";
+    params = neo4j_map(mapEntries, 4);
+    connection = neo4j_connect("neo4j://neo4j:secret@localhost:7687", NULL,
+                               NEO4J_INSECURE);
+    results = neo4j_run(connection, statement.c_str(), params);
+    // There should only be one record
+    if ((record = neo4j_fetch_next(results)) != NULL) {
+      neo4j_ntostring(neo4j_result_field(record, 0), field, 500);
+      programNodeLabel = std::string(field);
+      programNodeLabel =
+          programNodeLabel.substr(1, programNodeLabel.length() - 2);
+    }
+    neo4j_close_results(results);
+    neo4j_close(connection);
   }
-  neo4j_close_results(results);
-  neo4j_close(connection);
+  else
+  {
+    // TODO - Deal with other uses of unsafe pointers that may be triggered by control flow
+    //Step 1 - Check if it an unsafe pointer use
+    //PDQ:For now other uses are classified as safe
+    programNodeLabel="";
+
+  }
   if (programNodeLabel.empty())
     return false;
   errs() << "*** PDQ: FOUND AN UNSAFE POINTER ACTION:" << *instruction << ","
@@ -454,3 +449,4 @@ bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
 char AsapPass::ID = 0;
 static RegisterPass<AsapPass> X("asap", "Removes too costly sanity checks",
                                 false, false);
+

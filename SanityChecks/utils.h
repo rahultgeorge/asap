@@ -32,6 +32,9 @@ llvm::DebugLoc getSanityCheckDebugLoc(llvm::BranchInst *BI,
 void printDebugLoc(const llvm::DebugLoc &DbgLoc, llvm::LLVMContext &Ctx,
                    llvm::raw_ostream &Outs);
 
-bool isItAnArrayOperation(llvm::Instruction *instruction);
+//PDQ: The objective of this function is to find the memory operation protected
+//PDQ: ASAN first operation is the protected one and also ASAN uses at least one compile time optimzation wrt checks
+bool isItTheProtectedOperation(llvm::Instruction *instruction);
 
 #endif /* SANITYCHECKS_UTILS_H */
+

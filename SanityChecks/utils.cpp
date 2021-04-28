@@ -74,23 +74,64 @@ llvm::DebugLoc getSanityCheckDebugLoc(BranchInst *BI,
   return DL;
 }
 
-bool isItAnArrayOperation(llvm::Instruction *instruction) {
+bool isItTheProtectedOperation(llvm::Instruction *instruction) {
   bool isArrayOperation = false;
+  bool doneTraversing = false;
+  Value *value = NULL;
+  errs() << "*********** PDQ ************\n";
+  errs()<<*instruction<<"\n";
   if (LoadInst *loadInst = dyn_cast<LoadInst>(instruction)) {
     value = loadInst->getOperand(0);
-    errs() << "\t" << *value << "\n";
-    errs() << "\t type:" << *(value->getType()) << "\n";
-    if (dyn_cast<GetElementPtrInst>(value)) {
-      isArrayOperation=true;
-    }
   } else if (StoreInst *storeInst = dyn_cast<StoreInst>(instruction)) {
     value = storeInst->getPointerOperand();
-    errs() << "\t" << *value << "\n";
-    errs() << "\t type:" << *(value->getType()) << "\n";
-    if (dyn_cast<GetElementPtrInst>(value)) {
-      isArrayOperation=true;
-    }
+  } else
+    return isArrayOperation;
+
+  while (!doneTraversing && value) {
+    // Assuming our initial check failed we traverse
+
+    /* Three important things are made here (one of which is guaranteed by the
+     * front end)
+     * 1. Array is indexed using GEP
+     * 2. There are at least two geps to access an array in a struct and
+     * therefore source element type check will hold
+     * 3. In case of heap allocation(malloc) even though if we traverse back
+     * from the recent definition if 1 holds then the first check would be
+     * sufficient (Front end guarantees that a GEP for an object can only be
+     * used for that object) We need a way to deal with the case when 1 fails
+     */
+    errs() << *value << "\n";
+    if (GetElementPtrInst *getElementPtrInst =
+            dyn_cast<GetElementPtrInst>(value)) {
+      errs() << "\t GEP source type:"
+             << *(getElementPtrInst->getSourceElementType()) << "\n";
+      errs() << "\t GEP result type:"
+             << *(getElementPtrInst->getResultElementType()) << "\n";
+      // Structs which contain arrays would be broken into two GEP instructions
+      // Therefore source element type check should be sufficient
+      if ((getElementPtrInst->getSourceElementType())->isArrayTy())
+        isArrayOperation = true;
+      else
+        // GEP ing something else like a struct
+        isArrayOperation = false;
+      doneTraversing = true;
+    } else if (CastInst *castInstruction = dyn_cast<CastInst>(value)) {
+      // Handle cast instructions
+      value = castInstruction->getOperand(0);
+    } else if (AllocaInst *allocaInst = dyn_cast<AllocaInst>(value)) {
+      if (allocaInst->isArrayAllocation())
+        isArrayOperation = true;
+      // TODO - How should we handle this
+      else
+        isArrayOperation = false;
+      doneTraversing = true;
+    } else if (CallInst *callInst = dyn_cast<CallInst>(value)) {
+      // TODO - Handle heap as well
+      doneTraversing = true;
+    } else
+      break;
   }
+
   return isArrayOperation;
 }
 
@@ -114,3 +155,4 @@ void printDebugLoc(const DebugLoc &DbgLoc, LLVMContext &Ctx,
     Outs << ':' << DL->getColumn();
   }
 }
+

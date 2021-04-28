@@ -7,7 +7,13 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include <neo4j-client.h>
-
+//PDQ : Constant for the kind of elision - Retain all unsafe uses, retain only UPAs(data), Something in between
+enum PDQElisionLevels
+{
+  ConservativeUnsafe,
+  DataOnlyUnsafe
+};
+#define PDQ_ELISION_LEVEL DataOnlyUnsafe
 namespace sanitychecks {
 class GCOVFile;
 }
@@ -50,3 +56,4 @@ private:
 
   bool checkIfUnsafePointerAction(llvm::Instruction *instruction);
 };
+
