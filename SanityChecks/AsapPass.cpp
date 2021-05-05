@@ -2,6 +2,7 @@
 // Please see LICENSE.txt for copyright and licensing information.
 
 #include "AsapPass.h"
+#include <vector>
 
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -46,8 +47,9 @@ bool AsapPass::runOnModule(Module &M) {
   // PDQ:  Fetch program name
   programName = M.getModuleIdentifier();
   programName = programName.substr(0, programName.length() - 3);
-  errs()<<"PDQ::Program name:"<<programName<<"\n";
-  programName="bzip2";
+  errs() << "PDQ::Program name:" << programName << "\n";
+  // TODO - Deal with module/program name issue
+  programName = "bzip2";
   // Check whether we got the right amount of parameters
   int nParams = 0;
   if (SanityLevel >= 0.0)
@@ -82,6 +84,7 @@ bool AsapPass::runOnModule(Module &M) {
   // ot incur any cost (sanity level)
   uint64_t safeChecksRemovedCost = 0;
   size_t safeNChecksRemoved = 0;
+  std::vector<BranchInst *> pdqSafeChecksRemoved;
   errs() << "Initial cost  threshold:" << CostThreshold << "\n";
 
   // PDQ: We simulate the ASAP run without actually removing the checks just to
@@ -136,6 +139,9 @@ bool AsapPass::runOnModule(Module &M) {
   RemovedCost = 0;
   NChecksRemoved = 0;
   errs() << "PDQ cost threshold level" << CostThreshold << "\n";
+
+  // PDQ: First remove all "safe" and then we handle hot checks as per the
+  // budget
   for (const SanityCheckCostPass::CheckCost &I : SCC->getCheckCosts()) {
     errs() << "Check " << checkNumber << *(I.first) << "\n";
     // PDQ :: Configurable - different dimensions
@@ -144,14 +150,23 @@ bool AsapPass::runOnModule(Module &M) {
         errs() << "Safe operation found:" << safeNChecksRemoved << "\n";
         safeChecksRemovedCost += I.second;
         safeNChecksRemoved += 1;
+        pdqSafeChecksRemoved.push_back(I.first);
       }
     }
+    ++checkNumber;
+  }
+
+  checkNumber = 1;
+  // PDQ: We now handle all "unsafe" checks as we see fit
+  for (const SanityCheckCostPass::CheckCost &I : SCC->getCheckCosts()) {
+    errs() << "Check " << checkNumber << *(I.first) << "\n";
     // PDQ: Based on our AG computation and other logic we've decided we need to
     // monitor. PDQ: Here on we use ASAP logic that is we incur the cost and
     // remove the check as per the budget
-    else {
-      errs() << "Unsafe operation found:" << NChecksRemoved <<",cost:"<< RemovedCost
-             << "\n";
+    if (std::find(pdqSafeChecksRemoved.begin(), pdqSafeChecksRemoved.end(),
+                  I.first) == pdqSafeChecksRemoved.end()) {
+      errs() << "Unsafe operation found:" << NChecksRemoved
+             << ",cost:" << RemovedCost << "\n";
       // Elision based on sanity level and
       if (SanityLevel >= 0.0) {
         if ((NChecksRemoved + 1) > TotalChecks * (1.0 - SanityLevel)) {
@@ -193,14 +208,12 @@ bool AsapPass::runOnModule(Module &M) {
 
   NChecksRemoved += safeNChecksRemoved;
   RemovedCost += safeChecksRemovedCost;
-  errs() << "Unsafe objects checks removed:" << NChecksRemoved << ","
-         << RemovedCost << "\n";
 
   errs() << "PDQ:"
          << "\n\t# checks removed (safe objects):" << safeNChecksRemoved
          << "\n\t# total checks removed:" << NChecksRemoved
          << "\n\tRemoved cost (safe objects):" << safeChecksRemovedCost
-         << "\n\tRemoved cost:" << RemovedCost
+         << "\n\tRemoved cost(total):" << RemovedCost
          << "\n\t Total # checks:" << TotalChecks << "\n";
 
   dbgs() << "Removed " << NChecksRemoved << " out of " << TotalChecks
@@ -310,6 +323,7 @@ bool AsapPass::isSafeOperation(BranchInst *branchInst) {
   BasicBlock *memoryAccessBasicBlock;
   Instruction *memoryAccessInstruction = NULL;
   bool isDeclaredOnStack = true;
+  bool isSafe = true;
   const TargetLibraryInfo *TLI = NULL;
 
   // Step 1: Find the regular branch
@@ -323,10 +337,11 @@ bool AsapPass::isSafeOperation(BranchInst *branchInst) {
   }
 
   // Step 3 - Check the actual operation
+  TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+
+  // The case where there is only one memory access instruction
   if (memoryAccessInstruction) {
     errs() << "Memory access instruction:" << *memoryAccessInstruction << "\n";
-
-    TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 
     // PDQ: Check if it is declared on the stack as we do not handle global
     // currently
@@ -346,9 +361,32 @@ bool AsapPass::isSafeOperation(BranchInst *branchInst) {
       return !checkIfUnsafePointerAction(memoryAccessInstruction);
   }
 
-  // PDQ: Conservative - if we can't figure out the memory access operation
-  // let's classify it as unsafe (NEEDED). Also, if it is not declared on the
-  // stack (Conservative-Unsafe)
+  // Case when there is more than one and therefore since it is hard to check if
+  // asan has performed an optimization
+  // We directly check all instructions
+  // PDQ: This step will be conservative (sound)
+  else {
+    for (auto it = memoryAccessBasicBlock->begin();
+         it != memoryAccessBasicBlock->end(); it++) {
+
+      if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
+        errs() << "\t Memory access instruction:" << *it << "\n";
+        if (isAllocationFn(loadInst->getOperand(0), TLI) ||
+            isa<GlobalVariable>(loadInst->getOperand(0)))
+          break;
+        isSafe = isSafe && (!checkIfUnsafePointerAction(loadInst));
+
+      } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
+        errs() << "\t Memory access instruction:" << *it << "\n";
+        if (isAllocationFn(storeInst->getOperand(1), TLI) ||
+            isa<GlobalVariable>(storeInst->getOperand(1)))
+          break;
+        isSafe = isSafe && (!checkIfUnsafePointerAction(storeInst));
+      }
+    }
+    return isSafe;
+  }
+  // PDQ: if it is not declared on the stack (Conservative-Unsafe)
   return false;
 }
 
@@ -356,6 +394,7 @@ llvm::Instruction *AsapPass::findMemoryAccessInstruction(
     llvm::BasicBlock *memoryAccessBasicBlock) {
   Instruction *memoryAccessInstruction = NULL;
   int numOfMemoryAccessInstructions = 0;
+  bool foundMemoryAccessInstruction = false;
 
   errs() << "Instructions in memory basic block\n";
 
@@ -364,16 +403,21 @@ llvm::Instruction *AsapPass::findMemoryAccessInstruction(
   // therefore the first one is sufficient
   for (auto it = memoryAccessBasicBlock->begin();
        it != memoryAccessBasicBlock->end(); it++) {
-    errs() << "PDQ:" << *it << "\n";
+    errs() << "\t PDQ:" << *it << "\n";
     if (LoadInst *loadInst = dyn_cast<LoadInst>(it)) {
-      memoryAccessInstruction = loadInst;
-      break;
+      ++numOfMemoryAccessInstructions;
+      if (!foundMemoryAccessInstruction)
+        memoryAccessInstruction = loadInst;
+      foundMemoryAccessInstruction = true;
+
     } else if (StoreInst *storeInst = dyn_cast<StoreInst>(it)) {
-      memoryAccessInstruction = storeInst;
-      break;
+      ++numOfMemoryAccessInstructions;
+      if (!foundMemoryAccessInstruction)
+        memoryAccessInstruction = storeInst;
+      foundMemoryAccessInstruction = true;
     }
   }
-  return memoryAccessInstruction;
+  return numOfMemoryAccessInstructions == 1 ? memoryAccessInstruction : NULL;
 }
 
 bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
@@ -410,8 +454,8 @@ bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
   mapEntries[2] = neo4j_map_entry("instruction", instructionValue);
   mapEntries[3] = neo4j_map_entry("function_name", functionNameValue);
 
-  if(PDQ_ELISION_LEVEL==PDQElisionLevels::DataOnlyUnsafe) {
-    errs()<<"PDQ::Data only UPA mode\n";
+  if (PDQ_ELISION_LEVEL == PDQElisionLevels::DataOnlyUnsafe) {
+    errs() << "PDQ::Data only UPA mode\n";
     // We only retain checks for unsafes uses where the data is controlled
     statement =
         " MATCH (a:AttackGraphNode)-[:EDGE]->(p:ProgramInstruction) "
@@ -431,14 +475,12 @@ bool AsapPass::checkIfUnsafePointerAction(Instruction *instruction) {
     }
     neo4j_close_results(results);
     neo4j_close(connection);
-  }
-  else
-  {
-    // TODO - Deal with other uses of unsafe pointers that may be triggered by control flow
-    //Step 1 - Check if it an unsafe pointer use
-    //PDQ:For now other uses are classified as safe
-    programNodeLabel="";
-
+  } else {
+    // TODO - Deal with other uses of unsafe pointers that may be triggered by
+    // control flow
+    // Step 1 - Check if it an unsafe pointer use
+    // PDQ:For now other uses are classified as safe
+    programNodeLabel = "";
   }
   if (programNodeLabel.empty())
     return false;

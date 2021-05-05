@@ -7,10 +7,19 @@ source "$SCRIPT_DIR/../python/build_utils.sh"
 
 export CC="$( which asap-clang )"
 export CXX="$( which asap-clang++ )"
+export LD="$(which ld )"
 
 CFLAGS_BASE=( -fno-omit-frame-pointer -fno-sanitize-recover=all
               -fsanitize-blacklist="$SCRIPT_DIR/asan_blacklist.txt"
-              -DOPENSSL_NO_HW_PADLOCK -DOPENSSL_NO_BUF_FREELISTS )
+              -DOPENSSL_NO_HW_PADLOCK -DOPENSSL_NO_BUF_FREELISTS  )
+
+
+
+#CFLAGS_BASE=( -DOPENSSL_THREADS -D_REENTRANT -DDSO_DLFCN -DHAVE_DLFCN_H -Wa,--noexecstack -m64 -DL_ENDIAN -DTERMIO -O3 -Wall
+#              -DOPENSSL_IA32_SSE2 -DOPENSSL_BN_ASM_MONT -DOPENSSL_BN_ASM_MONT5 -DOPENSSL_BN_ASM_GF2m
+#              -DSHA1_ASM -DSHA256_ASM -DSHA512_ASM -DMD5_ASM -DAES_ASM -DVPAES_ASM -DBSAES_ASM -DWHIRLPOOL_ASM -DGHASH_ASM -fsanitize-blacklist="$SCRIPT_DIR/asan_blacklist.txt")
+
+
 CFLAGS_ASAN=( -fsanitize=address "${CFLAGS_BASE[@]}" )
 
 fetch_openssl() {
@@ -41,12 +50,13 @@ build_and_test_openssl() {
 
 fetch_openssl
 
-build_asap_initial "openssl" "baseline" "configure_and_build_openssl" "${CFLAGS_BASE[@]}"
+build_asap_initial "openssl" "baseline" "configure_and_build_openssl" ""
+echo "Now building asap-initial with asan"
 build_asap_initial "openssl" "asan" "configure_and_build_openssl" "${CFLAGS_ASAN[@]}"
 
 build_asap_coverage "openssl" "asan" "build_and_test_openssl"
 
-build_asap_optimized "openssl" "asan" "s0000" "-asap-sanity-level=0.000" "build_openssl"
-build_asap_optimized "openssl" "asan" "c0010" "-asap-cost-level=0.010" "build_openssl"
-build_asap_optimized "openssl" "asan" "c0040" "-asap-cost-level=0.040" "build_openssl"
-build_asap_optimized "openssl" "asan" "c1000" "-asap-cost-level=1.000" "build_openssl"
+build_asap_optimized "openssl" "asan" "s0500" "-asap-sanity-level=0.500" "build_openssl"
+#build_asap_optimized "openssl" "asan" "c0010" "-asap-cost-level=0.010" "build_openssl"
+#build_asap_optimized "openssl" "asan" "c0040" "-asap-cost-level=0.040" "build_openssl"
+#build_asap_optimized "openssl" "asan" "c1000" "-asap-cost-level=1.000" "build_openssl"

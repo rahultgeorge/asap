@@ -37,7 +37,7 @@ build_bzip2() {
     local ldflags="$2"
     echo "Inside buid function""$@"
     make clean
-    make  -j=2 CC="$(which asap-clang)" \
+    make   CC="$(which asap-clang)" \
          CFLAGS="-Wall -Winline -O3 -g -D_FILE_OFFSET_BITS=64 $extra_cflags" \
          LDFLAGS="$ldflags" \
          all
@@ -59,10 +59,10 @@ build_asap_initial "bzip2" "asan"     "configure_and_build_bzip2" "$ASAN_CFLAGS"
 build_asap_coverage "bzip2" "asan"  "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
 #build_asap_coverage "bzip2" "ubsan" "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
 
-build_asap_optimized "bzip2" "asan" "s0000" "-asap-sanity-level=0.000" "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
-build_asap_optimized "bzip2" "asan" "c0010" "-asap-cost-level=0.010"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
-build_asap_optimized "bzip2" "asan" "c0040" "-asap-cost-level=0.040"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
-build_asap_optimized "bzip2" "asan" "c1000" "-asap-cost-level=1.000"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
+build_asap_optimized "bzip2" "asan" "s0500" "-asap-sanity-level=0.500" "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
+#build_asap_optimized "bzip2" "asan" "c0010" "-asap-cost-level=0.010"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
+#build_asap_optimized "bzip2" "asan" "c0040" "-asap-cost-level=0.040"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
+#build_asap_optimized "bzip2" "asan" "c1000" "-asap-cost-level=1.000"   "build_bzip2" "$ASAN_CFLAGS" "$ASAN_LDFLAGS"
 
 #build_asap_optimized "bzip2" "ubsan" "s0000" "-asap-sanity-level=0.000" "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"
 #build_asap_optimized "bzip2" "ubsan" "c0010" "-asap-cost-level=0.010"   "build_bzip2" "$UBSAN_CFLAGS" "$UBSAN_LDFLAGS"

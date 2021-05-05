@@ -228,7 +228,7 @@ class AsapInitialCompiler < BaseCompiler
           run!(find_llc(), opt_level, '-filetype=obj', '-relocation-model=pic',
                '-o', target_name, orig_name)
           #log("Init compiler gcno name:#{gcno_name},gcda name:#{gcda_name} and org name:#{orig_name} ")
-          # If everthing so far worked, return happily
+          # If everything so far worked, return happily
           return
         end
       rescue RunExternalCommandError
@@ -240,6 +240,15 @@ class AsapInitialCompiler < BaseCompiler
     # command normally.
     #log("Init compiler: failed so running the command normally")
     super
+  end
+
+  # Rahul: Added this cause maybe -femit-coverage-notes needs (lgcov) in some cases. WIP 
+  def do_link(cmd)
+    linker_args = cmd[1..-1]
+    linker_args = insert_arg(linker_args, '-coverage')
+    #linker_args = insert_arg(linker_args, '-lgcov')
+    #log("Profiling compiler linker args: #{linker_args}")
+    super([cmd[0]] + linker_args)
   end
 end
 
@@ -375,8 +384,9 @@ def compute_cost_threshold(state, args)
   if sanity_level
     sanity_level = sanity_level.to_f
     cost_threshold = costs[0] + 1
-
+    # Roughly identifies the min cost of the checks it's going to remove as per sanity level (>= cost threshold). May be more than sanity level checks due to same cost checks
     (0 ... costs.size).each do |i|
+      # Next(continue) if the costs are the same
       next if costs[i+1] == costs[i]
       # costs.size - i - 1 is the number of checks that will be left in the
       # program, if we remove all those costing costs[i] or more.
@@ -536,3 +546,4 @@ end
 
 main(ARGV)
 #log("test")
+

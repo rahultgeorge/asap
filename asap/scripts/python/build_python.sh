@@ -12,6 +12,7 @@ fetch_python() {
         hg clone http://hg.python.org/cpython
         (
             cd cpython
+	    # Trying a new version?
             hg checkout 3.4
         )
     fi
@@ -20,33 +21,35 @@ fetch_python() {
 configure_python() {
     cflags=$1
     ldflags=$2
+    echo "Configuring" $1, $2
+    # Some thing wrong with using a relative path (_testembed)
+    rsync -a ../cpython/ .
 
     # We create an extra build folder for python, because python's "make clean"
     # removes all object files under the build folder. This means we can't keep
     # the state folder there.
-    mkdir build
+    mkdir pdq_build
     (
-        cd build
-        ../../cpython/configure \
-            --without-pymalloc --disable-shared --disable-ipv6 \
+        cd pdq_build
+        ../configure \
+            --without-pymalloc --disable-shared --disable-ipv6  \
             CC="$(which asap-clang)" \
             CXX="$(which asap-clang++)" \
-            AR="$(which asap-ar)" \
-            RANLIB="$(which asap-ranlib)" \
-            CFLAGS="$cflags" LDFLAGS="$ldflags"
+            CFLAGS="$cflags" LDFLAGS=" $ldflags"
     )
 }
 
 build_python() {
     (
-        cd build
+        cd pdq_build
+        echo "Making python now after cleaning" "$N_JOBS $(pwd)"
         make clean
         make -j "$N_JOBS" all
     )
 }
 
 test_python() {
-    ./build/python -m test -j "$N_JOBS" -x \
+    ./pdq_build/python -m test -j "$N_JOBS" -x \
         test_aifc test_asyncio test_audioop test_buffer test_cmd_line \
         test_codeccallbacks test_codecs test_ctypes test_datetime test_difflib \
         test_docxmlrpc test_exceptions test_faulthandler test_format test_hash \
@@ -70,17 +73,17 @@ build_and_test_python() {
 
 fetch_python
 
-build_asap_initial "cpython" "baseline" "configure_and_build_python" "-O3" ""
+build_asap_initial "cpython" "baseline" "configure_and_build_python" "" ""
 build_asap_initial "cpython" "asan" "configure_and_build_python" "-O3 -fsanitize=address" "-fsanitize=address"
-build_asap_initial "cpython" "ubsan" "configure_and_build_python" "-O3 -fsanitize=undefined -fno-sanitize-recover=all" "-fsanitize=undefined"
+#build_asap_initial "cpython" "ubsan" "configure_and_build_python" "-O3 -fsanitize=undefined -fno-sanitize-recover=all" "-fsanitize=undefined"
 
-for tool in "asan" "ubsan"; do
+for tool in "asan"; do
     build_asap_coverage "cpython" "$tool" "build_and_test_python"
 
-    build_asap_optimized "cpython" "$tool" "s0000" "-asap-sanity-level=0.000" "build_python"
-    build_asap_optimized "cpython" "$tool" "c0010" "-asap-cost-level=0.010" "build_python"
-    build_asap_optimized "cpython" "$tool" "c0040" "-asap-cost-level=0.040" "build_python"
-    build_asap_optimized "cpython" "$tool" "c1000" "-asap-cost-level=1.000" "build_python"
+    build_asap_optimized "cpython" "$tool" "s0500" "-asap-sanity-level=0.000" "build_python"
+    #build_asap_optimized "cpython" "$tool" "c0010" "-asap-cost-level=0.010" "build_python"
+    #build_asap_optimized "cpython" "$tool" "c0040" "-asap-cost-level=0.040" "build_python"
+    #build_asap_optimized "cpython" "$tool" "c1000" "-asap-cost-level=1.000" "build_python"
 done
 
 
